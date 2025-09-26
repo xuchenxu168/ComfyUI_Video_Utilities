@@ -40,10 +40,10 @@ from fractions import Fraction
 try:
     from comfy_api.input_impl import VideoFromFile
     HAS_COMFYUI_VIDEO = True
-    print("[Video_Utiliities] 信息：✅ ComfyUI官方视频类型导入成功")
+    print("[Video Utilities] 信息：✅ ComfyUI官方视频类型导入成功")
 except ImportError as e:
     HAS_COMFYUI_VIDEO = False
-    print(f"[Video_Utiliities] 信息：⚠️ ComfyUI视频类型导入失败，使用简化版本: {e}")
+    print(f"[Video Utilities] 信息：⚠️ ComfyUI视频类型导入失败，使用简化版本: {e}")
     # 创建简单的替代类
     class VideoFromFile:
         def __init__(self, file_path):
@@ -126,13 +126,13 @@ CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 SEEDREAM4_CONFIG_FILE = 'SeedReam4_config.json'
 
 def _log_info(message):
-    print(f"[SeedReam4API] 信息：{message}")
+    print(f"[Video Utilities] 信息：{message}")
 
 def _log_warning(message):
-    print(f"[SeedReam4API] 警告：{message}")
+    print(f"[Video Utilities] 警告：{message}")
 
 def _log_error(message):
-    print(f"[SeedReam4API] 错误：{message}")
+    print(f"[Video Utilities] 错误：{message}")
 def tensor2pil(tensor):
     """将tensor转换为PIL图像 - 支持ComfyUI的[B, H, W, C]格式"""
     if tensor is None:
@@ -3742,9 +3742,11 @@ class VideoToGIFNode:
 
     def convert_to_gif(self, video, fps, max_width, max_size_mb, colors, dither, loop, keep_aspect=True):
         try:
+            _log_info("[Video_To_GIF] start")
             src = self._extract_video_path(video)
             if not src or not os.path.exists(src):
-                return ("", f"Video not found: {src}")
+                _log_error(f"[Video_To_GIF] source not found: {src}")
+                return {"ui": {}, "result": ("", f"Video not found: {src}")}
 
             out_dir = self._ensure_output_dir()
             base = os.path.splitext(os.path.basename(src))[0]
@@ -3764,7 +3766,10 @@ class VideoToGIFNode:
                 size_mb = os.path.getsize(dst) / (1024 * 1024)
                 if size_mb <= max_size_mb:
                     status = f"OK {size_mb:.2f}MB @ {attempt_fps}fps {attempt_width}px {colors}c dither={dither}"
-                    return (dst, status)
+                    video_name = os.path.basename(dst)
+                    video_path_name = os.path.basename(os.path.dirname(dst))
+                    _log_info(f"[Video_To_GIF] success {video_name} {size_mb:.2f}MB")
+                    return {"ui": {"video": [video_name, video_path_name]}, "result": (dst, status)}
                 # 过大则调整：优先降fps，其次降宽度
                 if attempt_fps > 6:
                     attempt_fps = max(6, int(attempt_fps * 0.8))
@@ -3777,10 +3782,15 @@ class VideoToGIFNode:
             if os.path.exists(dst):
                 size_mb = os.path.getsize(dst) / (1024 * 1024)
                 status = status or f"Exceeded target: {size_mb:.2f}MB (target {max_size_mb}MB)"
-                return (dst, status)
-            return ("", status or "GIF conversion failed")
+                video_name = os.path.basename(dst)
+                video_path_name = os.path.basename(os.path.dirname(dst))
+                _log_info(f"[Video_To_GIF] finished with warnings {video_name} {size_mb:.2f}MB")
+                return {"ui": {"video": [video_name, video_path_name]}, "result": (dst, status)}
+            _log_error(f"[Video_To_GIF] failed: {status}")
+            return {"ui": {}, "result": ("", status or "GIF conversion failed")}
         except Exception as e:
-            return ("", f"Error: {str(e)}")
+            _log_error(f"[Video_To_GIF] exception: {e}")
+            return {"ui": {}, "result": ("", f"Error: {str(e)}")}
 
 class PreviewGIFNode:
     @classmethod
@@ -3789,7 +3799,6 @@ class PreviewGIFNode:
             "required": {
                 "gif_path": ("STRING", {"default": ""}),
                 "copy_to_output": ("BOOLEAN", {"default": True}),
-                "preview_method": (["browser", "media_player"], {"default": "browser"}),
             }
         }
 
@@ -3810,9 +3819,9 @@ class PreviewGIFNode:
         os.makedirs(out_dir, exist_ok=True)
         return out_dir
 
-    def preview(self, gif_path, copy_to_output=True, preview_method="browser"):
+    def preview(self, gif_path, copy_to_output=True):
         if not gif_path or not os.path.exists(gif_path):
-            return ("", {"ui": {"text": "GIF 文件不存在"}})
+            return {"ui": {}, "result": ("",)}
 
         final_path = gif_path
         if copy_to_output:
@@ -3825,17 +3834,10 @@ class PreviewGIFNode:
                 except Exception:
                     final_path = gif_path
 
-        # 根据预览方法选择处理方式
-        if preview_method == "browser":
-            self._open_in_browser(final_path)
-            return (final_path, {"ui": {"text": f"已在浏览器中打开: {os.path.basename(final_path)}"}})
-        elif preview_method == "media_player":
-            self._open_in_media_player(final_path)
-            return (final_path, {"ui": {"text": f"已在媒体播放器中打开: {os.path.basename(final_path)}"}})
-        else:
-            # 默认用浏览器打开
-            self._open_in_browser(final_path)
-            return (final_path, {"ui": {"text": f"已在浏览器中打开: {os.path.basename(final_path)}"}})
+        # 启用 UI 预览，复用统一前端（video_preview.js）
+        video_name = os.path.basename(final_path)
+        video_path_name = os.path.basename(os.path.dirname(final_path))
+        return {"ui": {"video": [video_name, video_path_name]}, "result": (final_path,)}
 
 
     def _open_in_browser(self, file_path):
@@ -4016,12 +4018,21 @@ class VideoUtilitiesUploadLiveVideo:
         
         # 提取音频
         try:
+            import subprocess
             # 根据视频来源选择临时文件目录
             temp_dir = output_dir if video.startswith("[Output] ") else input_dir
             with tempfile.NamedTemporaryFile(suffix=".wav", dir=temp_dir, delete=False) as aud:
-                os.system(f"""ffmpeg -i "{video_path}" -vn -acodec pcm_s16le -ar 44100 -ac 1 "{aud.name}" -y""")
-            waveform, sample_rate = torchaudio.load(aud.name)
-            audio = {"waveform": waveform.unsqueeze(0), "sample_rate": sample_rate}
+                cmd = [
+                    "ffmpeg", "-nostdin", "-hide_banner", "-loglevel", "error",
+                    "-i", video_path, "-vn", "-acodec", "pcm_s16le", "-ar", "44100", "-ac", "1",
+                    aud.name, "-y"
+                ]
+                proc = subprocess.run(cmd, capture_output=True)
+            if proc.returncode == 0 and os.path.exists(aud.name) and os.path.getsize(aud.name) > 0:
+                waveform, sample_rate = torchaudio.load(aud.name)
+                audio = {"waveform": waveform.unsqueeze(0), "sample_rate": sample_rate}
+            else:
+                audio = None
             # 清理临时音频文件
             try:
                 os.unlink(aud.name)
@@ -4180,11 +4191,19 @@ class VideoUtilitiesLoadAFVideo:
     def load_video(self, video):
         video_path = os.path.join(input_dir,video)
         try:
+            import subprocess
             with tempfile.NamedTemporaryFile(suffix=".wav",dir=input_dir,delete=False) as aud:
-                os.system(f"""ffmpeg -i "{video_path}" -vn -acodec pcm_s16le -ar 44100 -ac 1 "{aud.name}" -y""")
-            waveform, sample_rate = torchaudio.load(aud.name)
-            audio = {"waveform": waveform.unsqueeze(0), "sample_rate": sample_rate}
-            # 清理临时音频文件
+                cmd = [
+                    "ffmpeg", "-nostdin", "-hide_banner", "-loglevel", "error",
+                    "-i", video_path, "-vn", "-acodec", "pcm_s16le", "-ar", "44100", "-ac", "1",
+                    aud.name, "-y"
+                ]
+                proc = subprocess.run(cmd, capture_output=True)
+            if proc.returncode == 0 and os.path.exists(aud.name) and os.path.getsize(aud.name) > 0:
+                waveform, sample_rate = torchaudio.load(aud.name)
+                audio = {"waveform": waveform.unsqueeze(0), "sample_rate": sample_rate}
+            else:
+                audio = None
             try:
                 os.unlink(aud.name)
             except:
@@ -4254,10 +4273,19 @@ class VideoUtilitiesLiveVideoMonitor:
             return {"result": (None, None, "", file_age, f"File too new (age: {file_age}s)")}
 
         try:
+            import subprocess
             with tempfile.NamedTemporaryFile(suffix=".wav", dir=output_dir, delete=False) as aud:
-                os.system(f"""ffmpeg -i "{latest_video}" -vn -acodec pcm_s16le -ar 44100 -ac 1 "{aud.name}" -y""")
-            waveform, sample_rate = torchaudio.load(aud.name)
-            audio = {"waveform": waveform.unsqueeze(0), "sample_rate": sample_rate}
+                cmd = [
+                    "ffmpeg", "-nostdin", "-hide_banner", "-loglevel", "error",
+                    "-i", latest_video, "-vn", "-acodec", "pcm_s16le", "-ar", "44100", "-ac", "1",
+                    aud.name, "-y"
+                ]
+                proc = subprocess.run(cmd, capture_output=True)
+            if proc.returncode == 0 and os.path.exists(aud.name) and os.path.getsize(aud.name) > 0:
+                waveform, sample_rate = torchaudio.load(aud.name)
+                audio = {"waveform": waveform.unsqueeze(0), "sample_rate": sample_rate}
+            else:
+                audio = None
             try:
                 os.unlink(aud.name)
             except:
