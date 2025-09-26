@@ -13,7 +13,7 @@
 - **Load AF Video** - 从 input 目录加载音视频，含前端预览与上传控件
 - **Live Video Monitor** - 监控 output 目录最新视频，自动刷新并预览；输出 `VHS_FILENAMES`
 - **Video Stitching** - 视频拼接功能
-- **Get Last Frame** - 提取视频最后一帧
+- **Get Last Frame** - 提取视频最后一帧及尾帧往前的任意帧
 - **Prompt Text Node** - 通用字符串输出（STRING）
 - **RGB Empty Image** - 生成纯色图片（IMAGE）
 
@@ -361,15 +361,22 @@ ComfyUI_Video_Utilities/
 ---
 
 ## 🤝 联系与支持
+<img src="https://github.com/xuchenxu168/images/blob/main/%E5%BE%AE%E4%BF%A1%E5%8F%B7.jpg" alt="WeChat QR Code" width="200" height="200">
 
-如果本项目对你有帮助，欢迎加微信交流或赞助支持项目发展：
+*Scan to add WeChat*
+*扫码添加微信*
 
-### 联系方式（微信）
+**WeChat ID**: `Kenchen7168`
 
-![微信联系二维码](image/wechat_contact.png)
+</td>
+<td width="50%" align="center">
 
-### 赞助支持（微信收款码）
+**☕ Support Development**
 
-![微信收款二维码](image/wechat_donate.png)
+<img src="https://github.com/xuchenxu168/images/blob/main/%E6%94%B6%E6%AC%BE%E7%A0%81.jpg" width="200" height="200">
 
-注：如果二维码无法显示，请将二维码图片放置在仓库 `image/` 目录下，文件名分别为 `wechat_contact.png` 与 `wechat_donate.png`。
+*Scan to buy me a coffee*
+*扫码请我喝咖啡*
+
+**💝 Every coffee counts!**
+*每一杯咖啡都是支持！*
