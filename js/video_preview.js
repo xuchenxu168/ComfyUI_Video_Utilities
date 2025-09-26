@@ -68,16 +68,13 @@ function clearPreviousVideo(node) {
     }
     
     try {
-        // Remove all existing video preview widgets
-        while (node.widgets.length > 0) {
-            let widget = node.widgets.pop();
-            if (widget && widget.parentEl) {
-                try {
-                    widget.parentEl.remove();
-                } catch (error) {
-                    console.log("Error removing widget parent:", error);
-                }
-            }
+        // 仅移除我们添加的 DOM 预览小部件（name === 'videopreview' 或带 parentEl 的 DOMWidget）
+        for (let i = node.widgets.length - 1; i >= 0; i--) {
+            const widget = node.widgets[i];
+            const isOurDomWidget = widget && (widget.name === "videopreview" || widget.parentEl);
+            if (!isOurDomWidget) continue;
+            try { widget.parentEl?.remove?.(); } catch {}
+            node.widgets.splice(i, 1);
         }
         
         // Clear any remaining video elements that might be orphaned
@@ -204,27 +201,44 @@ function previewVideo(node,file,type){
     previewWidget.parentEl.style['width'] = "100%"
     element.appendChild(previewWidget.parentEl);
     
-    previewWidget.videoEl = document.createElement("video");
-    previewWidget.videoEl.controls = true;
-    previewWidget.videoEl.loop = false;
-    previewWidget.videoEl.muted = false;
-    previewWidget.videoEl.style['width'] = "100%"
-    previewWidget.videoEl.setAttribute("data-node-id", node.id);
-    previewWidget.videoEl.setAttribute("preload", "metadata");
-    
-    // Clear any existing source to prevent ghosting
-    previewWidget.videoEl.src = "";
-    previewWidget.videoEl.load();
-    
-    previewWidget.videoEl.addEventListener("loadedmetadata", () => {
-        previewWidget.aspectRatio = previewWidget.videoEl.videoWidth / previewWidget.videoEl.videoHeight;
-        fitHeight(previewNode);
-    });
-    previewWidget.videoEl.addEventListener("error", () => {
-        //TODO: consider a way to properly notify the user why a preview isn't shown.
-        previewWidget.parentEl.hidden = true;
-        fitHeight(previewNode);
-    });
+    const isGif = typeof file === 'string' && file.toLowerCase().endsWith('.gif');
+    if (isGif) {
+        // 使用 <img> 预览 GIF
+        previewWidget.imgEl = document.createElement("img");
+        previewWidget.imgEl.style['width'] = "100%";
+        previewWidget.imgEl.style['height'] = "auto";
+        previewWidget.imgEl.setAttribute("data-node-id", node.id);
+        previewWidget.imgEl.addEventListener("load", () => {
+            const w = previewWidget.imgEl.naturalWidth || 1;
+            const h = previewWidget.imgEl.naturalHeight || 1;
+            previewWidget.aspectRatio = w / h;
+            fitHeight(previewNode);
+        });
+        previewWidget.imgEl.addEventListener("error", () => {
+            previewWidget.parentEl.hidden = true;
+            fitHeight(previewNode);
+        });
+    } else {
+        // 使用 <video> 预览视频
+        previewWidget.videoEl = document.createElement("video");
+        previewWidget.videoEl.controls = true;
+        previewWidget.videoEl.loop = false;
+        previewWidget.videoEl.muted = false;
+        previewWidget.videoEl.style['width'] = "100%"
+        previewWidget.videoEl.setAttribute("data-node-id", node.id);
+        previewWidget.videoEl.setAttribute("preload", "metadata");
+        // Clear any existing source to prevent ghosting
+        previewWidget.videoEl.src = "";
+        previewWidget.videoEl.load();
+        previewWidget.videoEl.addEventListener("loadedmetadata", () => {
+            previewWidget.aspectRatio = previewWidget.videoEl.videoWidth / previewWidget.videoEl.videoHeight;
+            fitHeight(previewNode);
+        });
+        previewWidget.videoEl.addEventListener("error", () => {
+            previewWidget.parentEl.hidden = true;
+            fitHeight(previewNode);
+        });
+    }
 
     // 处理Type参数 - 将目录名转换为ComfyUI期望的类型
     let fileType = "output"; // 默认
@@ -244,7 +258,9 @@ function previewVideo(node,file,type){
     console.log("Preview Video - params:", params);
     
     previewWidget.parentEl.hidden = previewWidget.value.hidden;
-    previewWidget.videoEl.autoplay = !previewWidget.value.paused && !previewWidget.value.hidden;
+    if (!isGif && previewWidget.videoEl) {
+        previewWidget.videoEl.autoplay = !previewWidget.value.paused && !previewWidget.value.hidden;
+    }
     
     let target_width = 256;
     if (element.style?.width) {
@@ -260,16 +276,19 @@ function previewVideo(node,file,type){
         params.force_size = target_width+"x"+(target_width/ar);
     }
     
-    let videoUrl = api.apiURL('/view?' + new URLSearchParams(params));
-    console.log("Preview Video - 视频URL:", videoUrl);
+    let mediaUrl = api.apiURL('/view?' + new URLSearchParams(params));
+    console.log("Preview Media URL:", mediaUrl);
+    if (isGif) {
+        previewWidget.imgEl.src = mediaUrl;
+        previewWidget.imgEl.hidden = false;
+        previewWidget.parentEl.appendChild(previewWidget.imgEl);
+    } else {
+        previewWidget.videoEl.src = mediaUrl;
+        previewWidget.videoEl.hidden = false;
+        previewWidget.parentEl.appendChild(previewWidget.videoEl);
+    }
     
-    previewWidget.videoEl.src = videoUrl;
-    previewWidget.videoEl.hidden = false;
-    previewWidget.parentEl.appendChild(previewWidget.videoEl)
-    
-    console.log("Preview Video - 视频元素已添加到DOM");
-    console.log("Preview Video - 视频元素src:", previewWidget.videoEl.src);
-    console.log("Preview Video - 视频元素hidden:", previewWidget.videoEl.hidden);
+    console.log("Preview Media - 已添加到DOM");
     console.log("Preview Video - 父元素hidden:", previewWidget.parentEl.hidden);
     
     // Store cleanup function for when node is destroyed
@@ -283,6 +302,9 @@ function previewVideo(node,file,type){
             previewWidget.videoEl.src = "";
             previewWidget.videoEl.load();
         }
+        if (previewWidget.imgEl) {
+            previewWidget.imgEl.src = "";
+        }
         if (previewWidget.parentEl) {
             previewWidget.parentEl.remove();
         }
@@ -293,16 +315,30 @@ app.registerExtension({
     name: "Ken-Chen_VideoUtilities.VideoPreviewer",
     async beforeRegisterNodeDef(nodeType, nodeData, app) {
         console.log("VideoPreviewer - 注册节点:", nodeData?.name);
-        if (nodeData?.name == "VideoPreviewNode") {
+        if (nodeData?.name == "VideoPreviewNode" || nodeData?.name == "Video_To_GIF" || nodeData?.name == "VideoToGIFNode" || nodeData?.name == "Preview_GIF" || nodeData?.name == "PreviewGIFNode") {
             console.log("VideoPreviewer - 找到 VideoPreviewNode 节点，添加 onExecuted 方法");
             nodeType.prototype.onExecuted = function (data) {
                 console.log("VideoPreviewNode onExecuted - 完整数据:", data);
                 console.log("VideoPreviewNode onExecuted - this:", this);
                 
+                // 兼容 Video_To_GIF：data 可能为 { ui: { video:[name, dir] }, result: (...) }
+                let videoTuple = null;
                 if (data && data.video && Array.isArray(data.video) && data.video.length >= 2) {
-                    console.log("VideoPreviewNode onExecuted - data.video[0]:", data.video[0]);
-                    console.log("VideoPreviewNode onExecuted - data.video[1]:", data.video[1]);
-                    previewVideo(this, data.video[0], data.video[1]);
+                    videoTuple = data.video;
+                } else if (data && data.ui && Array.isArray(data.ui.video)) {
+                    videoTuple = data.ui.video;
+                } else if (typeof data === 'string') {
+                    try {
+                        const full = data;
+                        const name = full.split(/[/\\]/).pop();
+                        const lower = full.toLowerCase();
+                        const dir = lower.includes('/output/') || lower.includes('\\output\\') ? 'output' : (lower.includes('/input/') || lower.includes('\\input\\') ? 'input' : 'output');
+                        videoTuple = [name, dir];
+                    } catch (e) {}
+                }
+                if (videoTuple) {
+                    console.log("VideoPreviewNode onExecuted - 解析到:", videoTuple[0], videoTuple[1]);
+                    previewVideo(this, videoTuple[0], videoTuple[1]);
                 } else {
                     console.error("VideoPreviewNode - 数据格式错误:", data);
                 }
