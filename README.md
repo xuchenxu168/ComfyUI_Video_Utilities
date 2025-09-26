@@ -59,8 +59,6 @@ pip install -r requirements.txt
 
 ### 可选依赖
 - opencv-python (用于高级视频处理)
-- 人脸修复功能依赖 (见 requirements_face_restore.txt)
-
 ### 安装依赖
 ```bash
 # 基础功能
@@ -346,7 +344,7 @@ ComfyUI_Video_Utilities/
 - ✨ 添加 Preview GIF 节点
 - ✨ 添加 Video Stitching 节点
 - ✨ 添加 Get Last Frame 节点
-- 🔧 移除 UI 预览功能，专注于外部预览
+- 🔧 UI 预览功能，也可用浏览器和媒体播放器播放
 - 📚 完善文档和示例
 
 ---
@@ -433,4 +431,5 @@ If you find IndexTTS2 helpful and it has made your voice synthesis projects easi
 ![Community Driven](https://img.shields.io/badge/Community%20Driven-🤝-blue?style=for-the-badge)
 
 </div>
+
 
