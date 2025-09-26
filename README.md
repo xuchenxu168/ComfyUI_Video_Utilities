@@ -359,8 +359,29 @@ ComfyUI_Video_Utilities/
 **最后更新**: 2025-09-26
 
 ---
+## 💝 Support the Project
 
-## 🤝 联系与支持
+<div align="center">
+
+### ☕ Buy Me a Coffee
+
+If you find IndexTTS2 helpful and it has made your voice synthesis projects easier, consider supporting the development!
+
+**🎯 Your support helps:**
+- 🚀 Accelerate new feature development
+- 🧠 Enhance AI capabilities
+- 🔧 Improve system stability
+- 📚 Create better documentation
+- 🌍 Support the open-source community
+
+</div>
+
+<table>
+<tr>
+<td width="50%" align="center">
+
+**💬 WeChat Contact**
+
 <img src="https://github.com/xuchenxu168/images/blob/main/%E5%BE%AE%E4%BF%A1%E5%8F%B7.jpg" alt="WeChat QR Code" width="200" height="200">
 
 *Scan to add WeChat*
@@ -380,3 +401,38 @@ ComfyUI_Video_Utilities/
 
 **💝 Every coffee counts!**
 *每一杯咖啡都是支持！*
+
+</td>
+</tr>
+</table>
+
+<div align="center">
+
+**🙏 Thank you for your support!**
+
+*Your contributions, whether through code, feedback, or coffee, make IndexTTS2 better for everyone!*
+
+**谢谢您的支持！无论是代码贡献、反馈建议还是请我喝咖啡，都让IndexTTS2变得更好！**
+
+</div>
+
+---
+
+<div align="center">
+
+### 🚀 Ready to Create Amazing AI-Enhanced Voice Content?
+
+**[⬆️ Back to Top](#-comfyui-indextts2-plugin)** • **[📦 Install Now](#-installation)** • **[🎯 Quick Start](#-quick-start)** • **[🧠 AI Features](#-ai-enhancement-features)** • **[🤝 Join Community](#-community--contributing)** • **[💝 Support Project](#-support-the-project)**
+
+---
+
+**🎙️ IndexTTS2 ComfyUI Plugin** - *Revolutionary AI-Enhanced Voice Synthesis Platform*
+
+**🧠 Now with Advanced AI Enhancement Systems** - *Intelligent, Self-Learning, Continuously Improving*
+
+![Made with ❤️](https://img.shields.io/badge/Made%20with-❤️-red?style=for-the-badge)
+![AI Enhanced](https://img.shields.io/badge/AI%20Enhanced-🧠-purple?style=for-the-badge)
+![Open Source](https://img.shields.io/badge/Open%20Source-💚-green?style=for-the-badge)
+![Community Driven](https://img.shields.io/badge/Community%20Driven-🤝-blue?style=for-the-badge)
+
+</div>
