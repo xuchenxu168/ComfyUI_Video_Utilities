@@ -313,9 +313,6 @@ ComfyUI_Video_Utilities/
 ## 🎨 示例工作流
 
 项目包含多个示例工作流文件，位于 `examples/` 目录中：
-- `SeedReam4API_example.json` - SeedReam4 API 调用示例
-- `Nano-Banana官方API调用.json` - Nano-Banana API 调用示例
-- 更多示例请查看 examples 目录
 
 ## 📞 支持
 
@@ -436,3 +433,4 @@ If you find IndexTTS2 helpful and it has made your voice synthesis projects easi
 ![Community Driven](https://img.shields.io/badge/Community%20Driven-🤝-blue?style=for-the-badge)
 
 </div>
+
