@@ -27,7 +27,15 @@ function ensurePreview(node) {
 function setMediaSrc(el, filename, dirName) {
     const ext = (filename.split('.').pop() || '').toLowerCase();
     const params = new URLSearchParams({ filename, type: dirName.toLowerCase() });
-    const url = api.apiURL('/view?' + params);
+
+    // 直接使用转码端点（模仿 VHS 的做法）
+    let url;
+    if (ext === 'gif') {
+        url = api.apiURL('/view?' + params);
+    } else {
+        url = api.apiURL('/video_utilities/viewvideo?' + params);
+    }
+
     if (ext === 'gif') {
         const img = document.createElement('img');
         img.src = url;

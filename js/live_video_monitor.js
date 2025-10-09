@@ -85,7 +85,9 @@ function preview(node, filename, type) {
     filename,
     type: (type?.toLowerCase?.() === "input") ? "input" : "output",
   });
-  videoEl.src = api.apiURL('/view?' + params.toString());
+
+  // 直接使用转码端点（模仿 VHS 的做法）
+  videoEl.src = api.apiURL('/video_utilities/viewvideo?' + params.toString());
 }
 
 app.registerExtension({

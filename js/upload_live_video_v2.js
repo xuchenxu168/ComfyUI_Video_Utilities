@@ -82,19 +82,15 @@ function fitHeight(node) {
 }
 
 function clearPreviousVideo(node) {
-    // Remove only video preview widgets (name === 'videopreview')
-    // Keep the original widgets (video dropdown and upload button)
-    for (let i = node.widgets.length - 1; i >= 0; i--) {
-        const widget = node.widgets[i];
-        if (widget.name === 'videopreview') {
-            if (widget.parentEl) {
-                try {
-                    widget.parentEl.remove();
-                } catch (error) {
-                    console.log("Error removing widget parent:", error);
-                }
+    // Remove all existing video preview widgets
+    while (node.widgets.length > 2) {
+        let widget = node.widgets.pop();
+        if (widget.parentEl) {
+            try {
+                widget.parentEl.remove();
+            } catch (error) {
+                console.log("Error removing widget parent:", error);
             }
-            node.widgets.splice(i, 1);
         }
     }
     
@@ -120,15 +116,6 @@ function clearPreviousVideo(node) {
 }
 
 function previewVideo(node, file) {
-    // 防止重复调用 - 如果正在加载相同的视频，直接返回
-    if (node._currentVideoFile === file && node._videoLoading) {
-        return;
-    }
-
-    // 标记正在加载
-    node._currentVideoFile = file;
-    node._videoLoading = true;
-
     // Clear previous video content completely
     clearPreviousVideo(node);
     
@@ -188,9 +175,6 @@ function previewVideo(node, file) {
     
     // 简单的事件监听器
     previewWidget.videoEl.addEventListener("loadedmetadata", () => {
-        // 标记加载完成
-        node._videoLoading = false;
-
         if (previewWidget.videoEl.videoWidth && previewWidget.videoEl.videoHeight) {
             previewWidget.aspectRatio = previewWidget.videoEl.videoWidth / previewWidget.videoEl.videoHeight;
             fitHeight(previewNode);
@@ -214,11 +198,8 @@ function previewVideo(node, file) {
     });
     
     previewWidget.videoEl.addEventListener("error", (e) => {
-        // 标记加载完成（即使失败）
-        node._videoLoading = false;
-
-        console.log("❌ Video loading error:", e);
-        console.error("❌ Video error details:", previewWidget.videoEl.error);
+        console.log("Video loading error:", e);
+        console.error("Video error details:", previewWidget.videoEl.error);
 
         // 检查是否是格式不支持的错误
         if (previewWidget.videoEl.error && previewWidget.videoEl.error.code === MediaError.MEDIA_ERR_SRC_NOT_SUPPORTED) {
@@ -300,10 +281,11 @@ function previewVideo(node, file) {
     // Set video source and append to parent
     // 直接使用转码端点（模仿 VHS 的做法）
     const videoUrl = api.apiURL('/video_utilities/viewvideo?' + new URLSearchParams(params));
-    console.log("🎬 Setting video URL to:", videoUrl);
-    console.log("🎬 Params:", params);
     previewWidget.videoEl.src = videoUrl;
     previewWidget.videoEl.hidden = false;
+
+    // 强制输出到标题以便调试
+    node.title = "🎬 Using: /video_utilities/viewvideo";
     previewWidget.parentEl.appendChild(previewWidget.videoEl);
     
     // 强制多次更新尺寸以确保正确渲染
@@ -441,8 +423,14 @@ function videoUpload(node, inputName, inputData, app) {
 
     uploadWidget.serialize = false;
 
-    // 不在这里设置 callback，让 onNodeCreated 统一处理
-    // 这样避免重复调用 previewVideo
+    previewVideo(node, videoWidget.value);
+    const cb = node.callback;
+    videoWidget.callback = function () {
+        previewVideo(node, videoWidget.value);
+        if (cb) {
+            return cb.apply(this, arguments);
+        }
+    };
 
     return { widget: uploadWidget };
 }
@@ -452,65 +440,18 @@ ComfyWidgets.VIDEOPLOAD_LIVE = videoUpload;
 app.registerExtension({
     name: "Ken-Chen_VideoUtilities.UploadLiveVideo",
     async beforeRegisterNodeDef(nodeType, nodeData, app) {
-        if (nodeData?.name == "VideoUtilitiesUploadLiveVideo" || nodeData?.name == "Upload_Live_Video") {
+        if (nodeData?.name == "Upload_Live_Video") {
             nodeData.input.required.upload = ["VIDEOPLOAD_LIVE"];
-
-            // 拦截节点创建，添加视频预览
-            const onNodeCreated = nodeType.prototype.onNodeCreated;
-            nodeType.prototype.onNodeCreated = function() {
-                const result = onNodeCreated ? onNodeCreated.apply(this, arguments) : undefined;
-
-                // 找到 video 下拉列表 widget
-                const videoWidget = this.widgets.find(w => w.name === "video");
-                if (videoWidget) {
-                    const node = this; // 保存节点引用
-
-                    // 使用 chainCallback 方式，不覆盖原有 callback
-                    const originalCallback = videoWidget.callback;
-                    videoWidget.callback = function() {
-                        // 先调用原始 callback
-                        let r;
-                        if (originalCallback) {
-                            r = originalCallback.apply(this, arguments);
-                        }
-
-                        // 然后执行我们的预览逻辑
-                        clearPreviousVideo(node);
-                        if (videoWidget.value &&
-                            !videoWidget.value.startsWith("--- ") &&
-                            videoWidget.value !== "No video files found") {
-                            previewVideo(node, videoWidget.value);
-                        }
-
-                        return r;
-                    };
-
-                    // 初始化时也创建预览（跳过无效值）
-                    // 延迟执行，确保 widget 完全初始化
-                    setTimeout(() => {
-                        if (videoWidget.value &&
-                            !videoWidget.value.startsWith("--- ") &&
-                            videoWidget.value !== "No video files found") {
-                            previewVideo(node, videoWidget.value);
-                        }
-                    }, 100);
-                }
-
-                return result;
-            };
-
+            
             // 添加窗口大小变化监听器
             if (!window._videoNodeResizeHandler) {
                 window._videoNodeResizeHandler = () => {
                     // 重新调整所有视频节点的尺寸
-                    if (app.graph && app.graph._nodes_by_id) {
-                        const nodes = Object.values(app.graph._nodes_by_id);
-                        nodes.forEach(node => {
-                            if (node.widgets && node.widgets.find(w => w.name === "videopreview")) {
-                                fitHeight(node);
-                            }
-                        });
-                    }
+                    app.graph._nodes_by_id.forEach(node => {
+                        if (node.widgets && node.widgets.find(w => w.name === "videopreview")) {
+                            fitHeight(node);
+                        }
+                    });
                 };
                 window.addEventListener('resize', window._videoNodeResizeHandler);
             }

@@ -1,7 +1,9 @@
 import { app } from "../../../scripts/app.js";
 import { api } from '../../../scripts/api.js'
 
-console.log("🎬 Video Preview JavaScript 文件已加载");
+console.log("=".repeat(80));
+console.log("🎬🎬🎬 VIDEO PREVIEW JAVASCRIPT FILE LOADED - VERSION 2.0 🎬🎬🎬");
+console.log("=".repeat(80));
 
 // Add CSS styles to ensure proper video display
 const style = document.createElement('style');
@@ -161,10 +163,14 @@ function addPreviewOptions(nodeType) {
 
 function previewVideo(node,file,type){
     console.log("previewVideo 函数被调用 - node:", node, "file:", file, "type:", type);
-    
+
+    // 检查是否有编码警告（来自 VideoPreviewNode）
+    const hasCodecWarning = node._codecWarning;
+    const videoPath = node._videoPath;
+
     // Clear previous video content completely
     clearPreviousVideo(node);
-    
+
     var element = document.createElement("div");
     element.setAttribute("data-node-id", node.id);
     const previewNode = node;
@@ -231,12 +237,88 @@ function previewVideo(node,file,type){
         previewWidget.videoEl.src = "";
         previewWidget.videoEl.load();
         previewWidget.videoEl.addEventListener("loadedmetadata", () => {
+            console.log("Video metadata loaded - dimensions:", previewWidget.videoEl.videoWidth, "x", previewWidget.videoEl.videoHeight);
             previewWidget.aspectRatio = previewWidget.videoEl.videoWidth / previewWidget.videoEl.videoHeight;
             fitHeight(previewNode);
         });
-        previewWidget.videoEl.addEventListener("error", () => {
+
+        previewWidget.videoEl.addEventListener("error", (e) => {
+            console.error("Video loading error:", e);
+            console.error("Video error details:", previewWidget.videoEl.error);
+
+            // 尝试添加更多的视频格式支持
+            if (previewWidget.videoEl.error && previewWidget.videoEl.error.code === MediaError.MEDIA_ERR_SRC_NOT_SUPPORTED) {
+                console.warn("Video format not supported by browser, trying alternative approach");
+
+                // 检查是否有来自 VideoPreviewNode 的编码警告
+                const codecWarningFromNode = node._codecWarning;
+                const isTopazVideo = codecWarningFromNode === 'topaz_mpeg4' || file.toLowerCase().includes('topaz');
+                const isMpeg4Video = codecWarningFromNode === 'mpeg4' || codecWarningFromNode === 'topaz_mpeg4';
+
+                // 创建一个详细的提示信息
+                const errorDiv = document.createElement("div");
+                errorDiv.style.cssText = `
+                    padding: 15px;
+                    background: linear-gradient(135deg, #2d3748, #4a5568);
+                    color: #fff;
+                    text-align: center;
+                    border-radius: 8px;
+                    font-size: 13px;
+                    border: 1px solid #718096;
+                    margin: 5px;
+                `;
+
+                let errorMessage = "🎬 Video Preview Not Available\n\n";
+                if (isTopazVideo) {
+                    errorMessage += "⚠️ Topaz Video AI processed video detected\n";
+                    errorMessage += "This video uses MPEG-4 part 2 encoding which has limited browser support.\n\n";
+                    errorMessage += "💡 Solutions:\n";
+                    errorMessage += "• Video will work normally in ComfyUI workflows\n";
+                    errorMessage += "• For preview, consider converting to H.264 format\n";
+                    errorMessage += "• Use VHS Load Video nodes for better compatibility";
+                } else if (isMpeg4Video) {
+                    errorMessage += "⚠️ MPEG-4 part 2 encoding detected\n";
+                    errorMessage += "This encoding has limited browser support.\n\n";
+                    errorMessage += "💡 Solutions:\n";
+                    errorMessage += "• Video will work normally in ComfyUI workflows\n";
+                    errorMessage += "• For preview, consider converting to H.264 format";
+                } else {
+                    errorMessage += "Video format not supported in browser preview.\n";
+                    errorMessage += "File will still work in ComfyUI workflows.";
+                }
+                errorMessage += `\n\n📁 File: ${file}`;
+
+                errorDiv.innerHTML = errorMessage.replace(/\n/g, '<br>');
+
+                // 清除视频元素并显示错误信息
+                if (previewWidget.videoEl.parentNode) {
+                    previewWidget.videoEl.parentNode.removeChild(previewWidget.videoEl);
+                }
+                previewWidget.parentEl.appendChild(errorDiv);
+
+                // 设置一个合适的高度
+                previewWidget.computeSize = function (width) {
+                    return [width, isTopazVideo ? 180 : (isMpeg4Video ? 160 : 120)];
+                };
+                fitHeight(previewNode);
+                return;
+            }
+
             previewWidget.parentEl.hidden = true;
             fitHeight(previewNode);
+        });
+
+        // 添加更多事件监听器来调试
+        previewWidget.videoEl.addEventListener("loadstart", () => {
+            console.log("Video load started");
+        });
+
+        previewWidget.videoEl.addEventListener("canplay", () => {
+            console.log("Video can start playing");
+        });
+
+        previewWidget.videoEl.addEventListener("canplaythrough", () => {
+            console.log("Video can play through without buffering");
         });
     }
 
@@ -276,8 +358,15 @@ function previewVideo(node,file,type){
         params.force_size = target_width+"x"+(target_width/ar);
     }
     
-    let mediaUrl = api.apiURL('/view?' + new URLSearchParams(params));
-    console.log("Preview Media URL:", mediaUrl);
+    // 使用转码端点
+    let mediaUrl;
+    if (isGif) {
+        mediaUrl = api.apiURL('/view?' + new URLSearchParams(params));
+    } else {
+        // 强制使用转码端点
+        mediaUrl = api.apiURL('/video_utilities/viewvideo?' + new URLSearchParams(params));
+    }
+
     if (isGif) {
         previewWidget.imgEl.src = mediaUrl;
         previewWidget.imgEl.hidden = false;
@@ -286,8 +375,11 @@ function previewVideo(node,file,type){
         previewWidget.videoEl.src = mediaUrl;
         previewWidget.videoEl.hidden = false;
         previewWidget.parentEl.appendChild(previewWidget.videoEl);
+
+        // 强制加载视频
+        previewWidget.videoEl.load();
     }
-    
+
     console.log("Preview Media - 已添加到DOM");
     console.log("Preview Video - 父元素hidden:", previewWidget.parentEl.hidden);
     
@@ -314,19 +406,46 @@ function previewVideo(node,file,type){
 app.registerExtension({
     name: "Ken-Chen_VideoUtilities.VideoPreviewer",
     async beforeRegisterNodeDef(nodeType, nodeData, app) {
-        console.log("VideoPreviewer - 注册节点:", nodeData?.name);
+        console.log("🔍 VideoPreviewer - 注册节点:", nodeData?.name);
         if (nodeData?.name == "VideoPreviewNode" || nodeData?.name == "Video_To_GIF" || nodeData?.name == "VideoToGIFNode" || nodeData?.name == "Preview_GIF" || nodeData?.name == "PreviewGIFNode") {
-            console.log("VideoPreviewer - 找到 VideoPreviewNode 节点，添加 onExecuted 方法");
+            console.log("✅ VideoPreviewer - 找到 VideoPreviewNode 节点，添加 onExecuted 方法");
+
+            // 保存原始的 onExecuted（如果存在）
+            const originalOnExecuted = nodeType.prototype.onExecuted;
+
             nodeType.prototype.onExecuted = function (data) {
-                console.log("VideoPreviewNode onExecuted - 完整数据:", data);
-                console.log("VideoPreviewNode onExecuted - this:", this);
-                
+                console.log("🎬🎬🎬 VideoPreviewNode onExecuted 被调用！");
+                console.log("📦 完整数据:", JSON.stringify(data, null, 2));
+                console.log("📦 数据类型:", typeof data);
+                console.log("📦 this.id:", this.id);
+                console.log("📦 this.title:", this.title);
+
+                // 调用原始的 onExecuted（如果存在）
+                if (originalOnExecuted) {
+                    try {
+                        originalOnExecuted.call(this, data);
+                    } catch (e) {
+                        console.error("❌ 原始 onExecuted 调用失败:", e);
+                    }
+                }
+
+                // 检查是否有编码警告信息
+                let codecWarning = null;
+                let videoPath = null;
+                if (data && data.ui) {
+                    codecWarning = data.ui.codec_warning;
+                    videoPath = data.ui.video_path;
+                    console.log("📦 检测到 ui 数据:", data.ui);
+                }
+
                 // 兼容 Video_To_GIF：data 可能为 { ui: { video:[name, dir] }, result: (...) }
                 let videoTuple = null;
                 if (data && data.video && Array.isArray(data.video) && data.video.length >= 2) {
                     videoTuple = data.video;
+                    console.log("✅ 从 data.video 解析到:", videoTuple);
                 } else if (data && data.ui && Array.isArray(data.ui.video)) {
                     videoTuple = data.ui.video;
+                    console.log("✅ 从 data.ui.video 解析到:", videoTuple);
                 } else if (typeof data === 'string') {
                     try {
                         const full = data;
@@ -334,13 +453,28 @@ app.registerExtension({
                         const lower = full.toLowerCase();
                         const dir = lower.includes('/output/') || lower.includes('\\output\\') ? 'output' : (lower.includes('/input/') || lower.includes('\\input\\') ? 'input' : 'output');
                         videoTuple = [name, dir];
-                    } catch (e) {}
+                        console.log("✅ 从字符串解析到:", videoTuple);
+                    } catch (e) {
+                        console.error("❌ 字符串解析失败:", e);
+                    }
+                } else {
+                    console.error("❌ 无法解析视频数据！data:", data);
                 }
+
                 if (videoTuple) {
-                    console.log("VideoPreviewNode onExecuted - 解析到:", videoTuple[0], videoTuple[1]);
+                    console.log("🎬 准备调用 previewVideo:", videoTuple[0], videoTuple[1]);
+
+                    // 如果有编码警告，先显示警告信息
+                    if (codecWarning) {
+                        console.warn("⚠️ VideoPreviewNode - 检测到编码警告:", codecWarning);
+                        this._codecWarning = codecWarning;
+                        this._videoPath = videoPath;
+                    }
+
                     previewVideo(this, videoTuple[0], videoTuple[1]);
                 } else {
-                    console.error("VideoPreviewNode - 数据格式错误:", data);
+                    console.error("❌ VideoPreviewNode - 数据格式错误，无法预览！");
+                    console.error("❌ 原始数据:", data);
                 }
             }
             

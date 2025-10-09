@@ -1,3 +1,6 @@
+// Load AF Video JS - Version 2.0.2 - FORCE TRANSCODE ENDPOINT
+console.log("🎬 Load AF Video JS loaded - Version 2.0.2 - USING TRANSCODE ENDPOINT");
+
 import { app } from "../../../scripts/app.js";
 import { api } from '../../../scripts/api.js'
 import { ComfyWidgets } from "../../../scripts/widgets.js"
@@ -60,15 +63,19 @@ function fitHeight(node) {
 }
 
 function clearPreviousVideo(node) {
-    // Remove all existing video preview widgets
-    while (node.widgets.length > 2) {
-        let widget = node.widgets.pop();
-        if (widget.parentEl) {
-            try {
-                widget.parentEl.remove();
-            } catch (error) {
-                console.log("Error removing widget parent:", error);
+    // Remove only video preview widgets (name === 'videopreview')
+    // Keep the original widgets (video dropdown and upload button)
+    for (let i = node.widgets.length - 1; i >= 0; i--) {
+        const widget = node.widgets[i];
+        if (widget.name === 'videopreview') {
+            if (widget.parentEl) {
+                try {
+                    widget.parentEl.remove();
+                } catch (error) {
+                    console.log("Error removing widget parent:", error);
+                }
             }
+            node.widgets.splice(i, 1);
         }
     }
     
@@ -94,6 +101,15 @@ function clearPreviousVideo(node) {
 }
 
 function previewVideo(node, file) {
+    // 防止重复调用 - 如果正在加载相同的视频，直接返回
+    if (node._currentVideoFile === file && node._videoLoading) {
+        return;
+    }
+
+    // 标记正在加载
+    node._currentVideoFile = file;
+    node._videoLoading = true;
+
     // Clear previous video content completely
     clearPreviousVideo(node);
     
@@ -150,9 +166,11 @@ function previewVideo(node, file) {
     previewWidget.videoEl.loop = false;
     previewWidget.videoEl.muted = false;
     previewWidget.videoEl.style['width'] = "100%";
+    previewWidget.videoEl.style['minHeight'] = "200px";
     previewWidget.videoEl.style['height'] = "auto";
     previewWidget.videoEl.style['display'] = "block";
     previewWidget.videoEl.style['position'] = "relative";
+    previewWidget.videoEl.style['backgroundColor'] = "#000";
     previewWidget.videoEl.setAttribute("data-node-id", node.id);
     previewWidget.videoEl.setAttribute("preload", "metadata");
     
@@ -162,10 +180,13 @@ function previewVideo(node, file) {
     
     // 增强的事件监听器，确保视频尺寸正确适配
     previewWidget.videoEl.addEventListener("loadedmetadata", () => {
+        // 标记加载完成
+        node._videoLoading = false;
+
         if (previewWidget.videoEl.videoWidth && previewWidget.videoEl.videoHeight) {
             previewWidget.aspectRatio = previewWidget.videoEl.videoWidth / previewWidget.videoEl.videoHeight;
-            
-            console.log("Video loaded - Width:", previewWidget.videoEl.videoWidth, "Height:", previewWidget.videoEl.videoHeight, "Aspect Ratio:", previewWidget.aspectRatio);
+
+            console.log("✅ Video loaded - Width:", previewWidget.videoEl.videoWidth, "Height:", previewWidget.videoEl.videoHeight, "Aspect Ratio:", previewWidget.aspectRatio);
             
             // 检查是否为竖屏视频（高度大于宽度），如果是则使用更大的高度限制
             const isPortrait = previewWidget.aspectRatio < 1;
@@ -223,14 +244,71 @@ function previewVideo(node, file) {
     });
     
     previewWidget.videoEl.addEventListener("error", (e) => {
-        console.log("Video loading error:", e);
+        // 标记加载完成（即使失败）
+        node._videoLoading = false;
+
+        console.log("❌ Video loading error:", e);
+        console.error("❌ Video error details:", previewWidget.videoEl.error);
+
+        // 检查是否是格式不支持的错误
+        if (previewWidget.videoEl.error && previewWidget.videoEl.error.code === MediaError.MEDIA_ERR_SRC_NOT_SUPPORTED) {
+            console.warn("Video format not supported by browser");
+
+            // 检查是否是 Topaz 处理的视频
+            const isTopazVideo = file.toLowerCase().includes('topaz');
+
+            if (isTopazVideo) {
+                // 创建 Topaz 特定的错误提示
+                const errorDiv = document.createElement("div");
+                errorDiv.style.cssText = `
+                    padding: 12px;
+                    background: linear-gradient(135deg, #2d3748, #4a5568);
+                    color: #fff;
+                    text-align: center;
+                    border-radius: 6px;
+                    font-size: 12px;
+                    border: 1px solid #718096;
+                `;
+                errorDiv.innerHTML = `
+                    🎬 Topaz Video Preview Unavailable<br>
+                    <small>MPEG-4 encoding not supported in browser<br>
+                    Video will work in ComfyUI workflows</small>
+                `;
+
+                if (previewWidget.videoEl.parentNode) {
+                    previewWidget.videoEl.parentNode.removeChild(previewWidget.videoEl);
+                }
+                previewWidget.parentEl.appendChild(errorDiv);
+
+                previewWidget.computeSize = function (width) {
+                    return [width, 80];
+                };
+                fitHeight(previewNode);
+                return;
+            }
+        }
+
         previewWidget.parentEl.hidden = true;
         fitHeight(previewNode);
     });
 
+    let actualFilename = file;
+    let fileType = "input";
+    if (file.startsWith("[Output] ")) {
+        actualFilename = file.substring(9);
+        fileType = "output";
+    } else if (file.startsWith("[Input] ")) {
+        actualFilename = file.substring(8);
+        fileType = "input";
+    } else if (file.startsWith("--- ") || file === "No video files found") {
+        previewWidget.parentEl.hidden = true;
+        fitHeight(previewNode);
+        return;
+    }
+
     let params = {
-        "filename": file,
-        "type": "input",
+        "filename": actualFilename,
+        "type": fileType,
     }
     
     previewWidget.parentEl.hidden = previewWidget.value.hidden;
@@ -250,9 +328,17 @@ function previewVideo(node, file) {
     }
     
     // Set video source and append to parent
-    previewWidget.videoEl.src = api.apiURL('/view?' + new URLSearchParams(params));
+    // 强制使用转码端点 - 使用 api.apiURL() 来构建正确的 URL
+    // 添加时间戳参数防止缓存
+    params._t = Date.now();
+    const videoUrl = api.apiURL('/video_utilities/viewvideo?' + new URLSearchParams(params));
+
+    previewWidget.videoEl.src = videoUrl;
     previewWidget.videoEl.hidden = false;
     previewWidget.parentEl.appendChild(previewWidget.videoEl);
+
+    // 强制加载视频
+    previewWidget.videoEl.load();
     
     // 强制多次更新尺寸以确保正确渲染
     setTimeout(() => {
@@ -387,14 +473,8 @@ function videoUpload(node, inputName, inputData, app) {
 
     uploadWidget.serialize = false;
 
-    previewVideo(node, videoWidget.value);
-    const cb = node.callback;
-    videoWidget.callback = function () {
-        previewVideo(node, videoWidget.value);
-        if (cb) {
-            return cb.apply(this, arguments);
-        }
-    };
+    // 不在这里设置 callback，让 onNodeCreated 统一处理
+    // 这样避免重复调用 previewVideo
 
     return { widget: uploadWidget };
 }
@@ -404,9 +484,53 @@ ComfyWidgets.VIDEOPLOAD = videoUpload;
 app.registerExtension({
     name: "Ken-Chen_VideoUtilities.LoadAFVideo",
     async beforeRegisterNodeDef(nodeType, nodeData, app) {
-        if (nodeData?.name == "Load_AF_Video") {
+        if (nodeData?.name == "VideoUtilitiesLoadAFVideo" || nodeData?.name == "Load_AF_Video") {
             nodeData.input.required.upload = ["VIDEOPLOAD"];
-            
+
+            // 拦截节点创建，添加视频预览
+            const onNodeCreated = nodeType.prototype.onNodeCreated;
+            nodeType.prototype.onNodeCreated = function() {
+                const result = onNodeCreated ? onNodeCreated.apply(this, arguments) : undefined;
+
+                // 找到 video 下拉列表 widget
+                const videoWidget = this.widgets.find(w => w.name === "video");
+                if (videoWidget) {
+                    const node = this; // 保存节点引用
+
+                    // 使用 chainCallback 方式，不覆盖原有 callback
+                    const originalCallback = videoWidget.callback;
+                    videoWidget.callback = function() {
+                        // 先调用原始 callback
+                        let r;
+                        if (originalCallback) {
+                            r = originalCallback.apply(this, arguments);
+                        }
+
+                        // 然后执行我们的预览逻辑
+                        clearPreviousVideo(node);
+                        if (videoWidget.value &&
+                            !videoWidget.value.startsWith("--- ") &&
+                            videoWidget.value !== "No video files found") {
+                            previewVideo(node, videoWidget.value);
+                        }
+
+                        return r;
+                    };
+
+                    // 初始化时也创建预览（跳过无效值）
+                    // 延迟执行，确保 widget 完全初始化
+                    setTimeout(() => {
+                        if (videoWidget.value &&
+                            !videoWidget.value.startsWith("--- ") &&
+                            videoWidget.value !== "No video files found") {
+                            previewVideo(node, videoWidget.value);
+                        }
+                    }, 100);
+                }
+
+                return result;
+            };
+
             // 添加窗口大小变化监听器
             if (!window._videoNodeResizeHandler) {
                 window._videoNodeResizeHandler = () => {
