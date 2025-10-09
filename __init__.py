@@ -1,5 +1,5 @@
-# Doubao-Seed Plugin for ComfyUI
-# 专注于Doubao图像和视频生成功能
+# Video Utilities Plugin for ComfyUI
+# 专注于视频处理和工具功能
 # 作者: Ken-Chen
 # 版本: 2.0.0
 
@@ -12,6 +12,16 @@ NODE_DISPLAY_NAME_MAPPINGS = {}
 # Delay module import to avoid startup import errors
 def load_modules():
     global NODE_CLASS_MAPPINGS, NODE_DISPLAY_NAME_MAPPINGS
+
+    # Import server routes first
+    try:
+        # 使用不同的名称避免与 ComfyUI 的 server 模块冲突
+        from . import server as video_server
+        print("[Video Utilities] Server routes loaded")
+    except Exception as e:
+        print(f"[Video Utilities] Warning: Could not load server routes: {e}")
+        import traceback
+        traceback.print_exc()
 
     # Import Video Utilities module
     try:
@@ -36,6 +46,9 @@ load_modules()
 
 # 设置 Web 目录 - 必须在 NODE_CLASS_MAPPINGS 之前设置
 WEB_DIRECTORY = "./js"
+
+# ComfyUI Registry ID
+__all__ = ['NODE_CLASS_MAPPINGS', 'NODE_DISPLAY_NAME_MAPPINGS', 'WEB_DIRECTORY']
 
 print("[Video Utilities] Plugin loading completed!")
 print(f"[Video Utilities] Registered {len(NODE_CLASS_MAPPINGS)} nodes")

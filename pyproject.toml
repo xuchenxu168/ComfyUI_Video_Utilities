@@ -1,16 +1,16 @@
 [project]
-name = "ComfyUI-GLM4"
-description = "ComfyUI GLM Nodes: Seamlessly integrate ZhipuAI GLM models into ComfyUI for enhanced text generation and image-to-prompt capabilities. Features include advanced text chat (video prompt expansion) and GLM-4V powered image description."
+name = "ComfyUI_Video_Utilities"
+description = "ComfyUI Video Utilities: A comprehensive collection of video processing nodes for ComfyUI including video stitching, frame extraction, GIF conversion, live video monitoring, and preview capabilities."
 version = "1.2.0"
 license = {file = "LICENSE"}
-dependencies = ["zhipuai"]
+dependencies = []
 
 [project.urls]
-Repository = "https://github.com/msola-ht/ComfyUI-GLM4"
+Repository = "https://github.com/Ken-Chen/ComfyUI_Video_Utilities"
 #  Used by Comfy Registry https://registry.comfy.org
 
 [tool.comfy]
-PublisherId = "msola"
-DisplayName = "ComfyUI-GLM4"
+PublisherId = "Ken-Chen"
+DisplayName = "ComfyUI_Video_Utilities"
 Icon = ""
 includes = []

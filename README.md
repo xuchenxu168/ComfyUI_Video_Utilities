@@ -13,7 +13,7 @@
 - **Load AF Video** - 从 input 目录加载音视频，含前端预览与上传控件
 - **Live Video Monitor** - 监控 output 目录最新视频，自动刷新并预览；输出 `VHS_FILENAMES`
 - **Video Stitching** - 视频拼接功能
-- **Get Last Frame** - 提取视频最后一帧及尾帧往前的任意帧
+- **Get Last Frame** - 提取视频最后一帧
 - **Prompt Text Node** - 通用字符串输出（STRING）
 - **RGB Empty Image** - 生成纯色图片（IMAGE）
 
@@ -59,6 +59,8 @@ pip install -r requirements.txt
 
 ### 可选依赖
 - opencv-python (用于高级视频处理)
+- 人脸修复功能依赖 (见 requirements_face_restore.txt)
+
 ### 安装依赖
 ```bash
 # 基础功能
@@ -311,6 +313,9 @@ ComfyUI_Video_Utilities/
 ## 🎨 示例工作流
 
 项目包含多个示例工作流文件，位于 `examples/` 目录中：
+- `SeedReam4API_example.json` - SeedReam4 API 调用示例
+- `Nano-Banana官方API调用.json` - Nano-Banana API 调用示例
+- 更多示例请查看 examples 目录
 
 ## 📞 支持
 
@@ -344,7 +349,7 @@ ComfyUI_Video_Utilities/
 - ✨ 添加 Preview GIF 节点
 - ✨ 添加 Video Stitching 节点
 - ✨ 添加 Get Last Frame 节点
-- 🔧 UI 预览功能，也可用浏览器和媒体播放器播放
+- 🔧 移除 UI 预览功能，专注于外部预览
 - 📚 完善文档和示例
 
 ---
@@ -354,82 +359,17 @@ ComfyUI_Video_Utilities/
 **最后更新**: 2025-09-26
 
 ---
-## 💝 Support the Project
 
-<div align="center">
+## 🤝 联系与支持
 
-### ☕ Buy Me a Coffee
+如果本项目对你有帮助，欢迎加微信交流或赞助支持项目发展：
 
-If you find IndexTTS2 helpful and it has made your voice synthesis projects easier, consider supporting the development!
+### 联系方式（微信）
 
-**🎯 Your support helps:**
-- 🚀 Accelerate new feature development
-- 🧠 Enhance AI capabilities
-- 🔧 Improve system stability
-- 📚 Create better documentation
-- 🌍 Support the open-source community
+![微信联系二维码](image/wechat_contact.png)
 
-</div>
+### 赞助支持（微信收款码）
 
-<table>
-<tr>
-<td width="50%" align="center">
+![微信收款二维码](image/wechat_donate.png)
 
-**💬 WeChat Contact**
-
-<img src="https://github.com/xuchenxu168/images/blob/main/%E5%BE%AE%E4%BF%A1%E5%8F%B7.jpg" alt="WeChat QR Code" width="200" height="200">
-
-*Scan to add WeChat*
-*扫码添加微信*
-
-**WeChat ID**: `Kenchen7168`
-
-</td>
-<td width="50%" align="center">
-
-**☕ Support Development**
-
-<img src="https://github.com/xuchenxu168/images/blob/main/%E6%94%B6%E6%AC%BE%E7%A0%81.jpg" width="200" height="200">
-
-*Scan to buy me a coffee*
-*扫码请我喝咖啡*
-
-**💝 Every coffee counts!**
-*每一杯咖啡都是支持！*
-
-</td>
-</tr>
-</table>
-
-<div align="center">
-
-**🙏 Thank you for your support!**
-
-*Your contributions, whether through code, feedback, or coffee, make IndexTTS2 better for everyone!*
-
-**谢谢您的支持！无论是代码贡献、反馈建议还是请我喝咖啡，都让IndexTTS2变得更好！**
-
-</div>
-
----
-
-<div align="center">
-
-### 🚀 Ready to Create Amazing AI-Enhanced Voice Content?
-
-**[⬆️ Back to Top](#-comfyui-indextts2-plugin)** • **[📦 Install Now](#-installation)** • **[🎯 Quick Start](#-quick-start)** • **[🧠 AI Features](#-ai-enhancement-features)** • **[🤝 Join Community](#-community--contributing)** • **[💝 Support Project](#-support-the-project)**
-
----
-
-**🎙️ IndexTTS2 ComfyUI Plugin** - *Revolutionary AI-Enhanced Voice Synthesis Platform*
-
-**🧠 Now with Advanced AI Enhancement Systems** - *Intelligent, Self-Learning, Continuously Improving*
-
-![Made with ❤️](https://img.shields.io/badge/Made%20with-❤️-red?style=for-the-badge)
-![AI Enhanced](https://img.shields.io/badge/AI%20Enhanced-🧠-purple?style=for-the-badge)
-![Open Source](https://img.shields.io/badge/Open%20Source-💚-green?style=for-the-badge)
-![Community Driven](https://img.shields.io/badge/Community%20Driven-🤝-blue?style=for-the-badge)
-
-</div>
-
-
+注：如果二维码无法显示，请将二维码图片放置在仓库 `image/` 目录下，文件名分别为 `wechat_contact.png` 与 `wechat_donate.png`。

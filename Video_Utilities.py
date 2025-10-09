@@ -408,13 +408,142 @@ def download_video_from_url(video_url: str, output_dir: str = None) -> str:
         _log_error(f"视频下载失败: {e}")
         return None
 
+def create_preview_compatible_video(video_path: str, force_convert=False, use_cache=True):
+    """为 MPEG-4 等不兼容格式创建预览兼容的 H.264 版本
+
+    Args:
+        video_path: 原始视频路径
+        force_convert: 是否强制重新转换
+        use_cache: 是否使用缓存的预览版本
+
+    Returns:
+        str: 预览版本的路径，如果转换失败则返回 None
+    """
+    try:
+        if not video_path or not os.path.exists(video_path):
+            _log_error(f"❌ 视频文件不存在: {video_path}")
+            return None
+
+        # 确定预览文件的保存位置
+        # 如果原视频在 input 目录，预览版本也放在 input 目录
+        # 如果原视频在 output 目录，预览版本也放在 output 目录
+        video_dir = os.path.dirname(video_path)
+        base_name = os.path.splitext(os.path.basename(video_path))[0]
+        preview_filename = f"{base_name}_h264_preview.mp4"
+        preview_path = os.path.join(video_dir, preview_filename)
+
+        # 检查是否已经存在预览版本
+        if use_cache and os.path.exists(preview_path) and not force_convert:
+            # 检查预览版本是否比原视频新
+            if os.path.getmtime(preview_path) >= os.path.getmtime(video_path):
+                _log_info(f"🎬 使用缓存的预览版本: {preview_path}")
+                return preview_path
+            else:
+                _log_info(f"🔄 预览版本过期，需要重新创建")
+
+        # 检查原视频编码
+        import subprocess
+        probe_cmd = [
+            "ffprobe", "-v", "quiet", "-select_streams", "v:0",
+            "-show_entries", "stream=codec_name", "-of", "csv=p=0", video_path
+        ]
+        probe_result = subprocess.run(probe_cmd, capture_output=True, text=True)
+
+        if probe_result.returncode != 0:
+            _log_error(f"❌ 无法检测视频编码: {video_path}")
+            return None
+
+        codec_name = probe_result.stdout.strip()
+        _log_info(f"🎬 检测到视频编码: {codec_name}")
+
+        # 只为 MPEG-4 等问题编码创建预览版本
+        if codec_name not in ['mpeg4', 'xvid', 'divx']:
+            _log_info(f"✅ 视频编码 {codec_name} 通常被浏览器支持，无需转换")
+            return None
+
+        _log_info(f"🔧 为 {codec_name} 编码创建 H.264 预览版本...")
+        _log_info(f"📁 预览文件将保存到: {preview_path}")
+
+        # 创建 H.264 预览版本
+        # 使用快速编码参数以减少转换时间
+        convert_cmd = [
+            "ffmpeg", "-i", video_path,
+            "-c:v", "libx264",           # H.264 编码
+            "-preset", "veryfast",       # 快速编码
+            "-crf", "23",                # 质量参数（23 是较好的质量）
+            "-c:a", "aac",               # AAC 音频编码
+            "-b:a", "128k",              # 音频比特率
+            "-movflags", "+faststart",   # 优化网络播放
+            "-y",                        # 覆盖已存在的文件
+            preview_path
+        ]
+
+        _log_info(f"🎬 开始转换...")
+        _log_info(f"命令: {' '.join(convert_cmd)}")
+
+        # 执行转换
+        convert_result = subprocess.run(
+            convert_cmd,
+            capture_output=True,
+            text=True,
+            timeout=300  # 5分钟超时
+        )
+
+        if convert_result.returncode == 0 and os.path.exists(preview_path):
+            file_size = os.path.getsize(preview_path) / (1024 * 1024)
+            _log_info(f"✅ 预览版本创建成功: {preview_path} ({file_size:.2f} MB)")
+            return preview_path
+        else:
+            _log_error(f"❌ 预览版本创建失败")
+            _log_error(f"FFmpeg 错误: {convert_result.stderr}")
+            # 清理失败的文件
+            if os.path.exists(preview_path):
+                try:
+                    os.remove(preview_path)
+                except:
+                    pass
+            return None
+
+    except subprocess.TimeoutExpired:
+        _log_error(f"❌ 视频转换超时（超过5分钟）")
+        return None
+    except Exception as e:
+        _log_error(f"❌ 创建预览版本失败: {e}")
+        import traceback
+        _log_error(traceback.format_exc())
+        return None
+
 def video_to_comfyui_video(video_path: str):
-    """将视频文件转换为ComfyUI VIDEO对象 - 使用官方标准VideoFromFile"""
+    """将视频文件转换为ComfyUI VIDEO对象 - 使用官方标准VideoFromFile，支持 MPEG-4 等特殊编码"""
     try:
         if not video_path or not os.path.exists(video_path):
             raise ValueError(f"视频文件不存在: {video_path}")
 
         _log_info(f"🎬 开始创建ComfyUI VideoFromFile对象: {video_path}")
+
+        # 检查视频编码格式
+        codec_info = None
+        try:
+            import subprocess
+            probe_cmd = [
+                "ffprobe", "-v", "quiet", "-print_format", "json",
+                "-show_streams", "-select_streams", "v:0", video_path
+            ]
+            probe_result = subprocess.run(probe_cmd, capture_output=True, text=True)
+            if probe_result.returncode == 0:
+                import json
+                probe_data = json.loads(probe_result.stdout)
+                if probe_data.get("streams"):
+                    codec_info = probe_data["streams"][0]
+                    codec_name = codec_info.get("codec_name", "unknown")
+                    _log_info(f"🎬 视频编码: {codec_name}")
+
+                    # 特别处理 MPEG-4 part 2 编码（Topaz Video AI 常用）
+                    if codec_name == "mpeg4":
+                        _log_info(f"🔧 检测到 MPEG-4 part 2 编码，这可能是 Topaz Video AI 处理的视频")
+                        _log_info(f"💡 提示: 如果预览有问题，可以考虑转换为 H.264 格式")
+        except Exception as e:
+            _log_warning(f"⚠️ 无法检测视频编码: {e}")
 
         # 使用ComfyUI官方标准：直接从文件路径创建VideoFromFile对象
         video_obj = VideoFromFile(video_path)
@@ -433,6 +562,112 @@ def video_to_comfyui_video(video_path: str):
     except Exception as e:
         _log_error(f"创建VideoFromFile对象失败: {e}")
         return None
+
+def extract_video_path(video):
+    """从VIDEO对象提取文件路径 - 通用函数"""
+    _log_info(f"🔍 尝试从VIDEO对象提取路径: {type(video)}")
+
+    # 如果是字符串，直接返回
+    if isinstance(video, str):
+        _log_info(f"✅ 直接字符串路径: {video}")
+        return video
+
+    # 打印对象的所有属性（调试用）
+    try:
+        all_attrs = dir(video)
+        _log_info(f"🔍 对象的所有属性: {[attr for attr in all_attrs if not attr.startswith('_')]}")
+    except:
+        pass
+
+    # 尝试常见的文件路径属性
+    path_attributes = [
+        'file_path',    # 我们自己的VideoFromFile对象
+        'filename',     # 一些节点使用这个
+        'file',         # 向后兼容
+        'path',         # 通用路径属性
+        'filepath',     # 文件路径
+        'video_path',   # 视频路径
+        'source',       # 源文件
+        'url',          # URL路径
+        'video_file',   # 视频文件
+        'file_name',    # 文件名
+    ]
+
+    for attr in path_attributes:
+        if hasattr(video, attr):
+            value = getattr(video, attr)
+            _log_info(f"🔍 检查属性 {attr}: {type(value)} = {value}")
+            if isinstance(value, str) and value.strip() and not value.startswith('<'):
+                _log_info(f"✅ 通过属性 {attr} 获取路径: {value}")
+                return value.strip()
+
+    # 如果是字典类型
+    if isinstance(video, dict):
+        for key in path_attributes:
+            if key in video and isinstance(video[key], str) and video[key].strip():
+                _log_info(f"✅ 通过字典键 {key} 获取路径: {video[key]}")
+                return video[key].strip()
+
+    # 如果是列表或元组，尝试第一个元素
+    if isinstance(video, (list, tuple)) and len(video) > 0:
+        first_item = video[0]
+        if isinstance(first_item, str) and first_item.strip():
+            _log_info(f"✅ 通过列表第一个元素获取路径: {first_item}")
+            return first_item.strip()
+
+    # 尝试 get_stream_source 方法（ComfyUI VideoFromFile 对象）
+    if hasattr(video, 'get_stream_source'):
+        try:
+            stream_source = video.get_stream_source()
+            _log_info(f"🔍 调用 get_stream_source 返回: {type(stream_source)} = {stream_source}")
+
+            # stream_source 可能是一个对象，尝试提取路径
+            if isinstance(stream_source, str):
+                if stream_source.strip() and not stream_source.startswith('<'):
+                    _log_info(f"✅ 通过 get_stream_source 获取路径: {stream_source}")
+                    return stream_source.strip()
+            elif hasattr(stream_source, 'path'):
+                path = getattr(stream_source, 'path')
+                if isinstance(path, str) and path.strip():
+                    _log_info(f"✅ 通过 get_stream_source().path 获取路径: {path}")
+                    return path.strip()
+            elif hasattr(stream_source, 'file_path'):
+                path = getattr(stream_source, 'file_path')
+                if isinstance(path, str) and path.strip():
+                    _log_info(f"✅ 通过 get_stream_source().file_path 获取路径: {path}")
+                    return path.strip()
+            elif hasattr(stream_source, 'filename'):
+                path = getattr(stream_source, 'filename')
+                if isinstance(path, str) and path.strip():
+                    _log_info(f"✅ 通过 get_stream_source().filename 获取路径: {path}")
+                    return path.strip()
+
+            # 打印 stream_source 的属性
+            try:
+                stream_attrs = dir(stream_source)
+                _log_info(f"🔍 stream_source 的属性: {[attr for attr in stream_attrs if not attr.startswith('_')]}")
+            except:
+                pass
+
+        except Exception as e:
+            _log_warning(f"⚠️ 调用 get_stream_source 失败: {e}")
+
+    # 尝试调用可能的方法（但不包括 __str__，因为它可能返回对象表示）
+    method_names = ['get_path', 'get_file_path', 'get_filename', 'to_string']
+    for method_name in method_names:
+        if hasattr(video, method_name):
+            try:
+                result = getattr(video, method_name)()
+                _log_info(f"🔍 调用方法 {method_name} 返回: {type(result)} = {result}")
+                if isinstance(result, str) and result.strip() and not result.startswith('<'):
+                    _log_info(f"✅ 通过方法 {method_name} 获取路径: {result}")
+                    return result.strip()
+            except Exception as e:
+                _log_warning(f"⚠️ 调用方法 {method_name} 失败: {e}")
+
+    _log_error(f"❌ 无法从VIDEO对象提取路径: {type(video)}")
+    _log_error(f"❌ 对象内容: {repr(video)}")
+    return None
 
 def create_video_path_wrapper(file_path):
     """创建一个视频路径包装器，用于UtilNodes兼容性"""
@@ -3890,10 +4125,59 @@ class VideoPreviewNode:
     FUNCTION = "load_video"
 
     def load_video(self, video):
-        video_name = os.path.basename(video)
-        video_path_name = os.path.basename(os.path.dirname(video))
+        # 从 VIDEO 对象中提取实际的文件路径
+        video_path = extract_video_path(video)
+
+        if not video_path:
+            _log_error("❌ VideoPreviewNode: 无法从 VIDEO 对象中提取文件路径")
+            return {"ui": {"text": ["Error: Cannot extract video path"]}}
+
+        if not os.path.exists(video_path):
+            _log_error(f"❌ VideoPreviewNode: 视频文件不存在: {video_path}")
+            return {"ui": {"text": [f"Error: Video file not found: {os.path.basename(video_path)}"]}}
+
+        # 检查视频编码格式，特别是 Topaz 处理的 MPEG-4 视频
+        codec_warning = None
+        try:
+            import subprocess
+            probe_cmd = [
+                "ffprobe", "-v", "quiet", "-select_streams", "v:0",
+                "-show_entries", "stream=codec_name", "-of", "csv=p=0", video_path
+            ]
+            probe_result = subprocess.run(probe_cmd, capture_output=True, text=True)
+            if probe_result.returncode == 0:
+                codec_name = probe_result.stdout.strip()
+                _log_info(f"🎬 VideoPreviewNode: 检测到视频编码: {codec_name}")
+
+                # 检查是否是 MPEG-4 part 2 编码（Topaz 常用）
+                if codec_name == "mpeg4":
+                    is_topaz = "topaz" in os.path.basename(video_path).lower()
+                    if is_topaz:
+                        _log_warning(f"⚠️ VideoPreviewNode: 检测到 Topaz Video AI 处理的 MPEG-4 视频，浏览器预览可能有问题")
+                        codec_warning = "topaz_mpeg4"
+                    else:
+                        _log_warning(f"⚠️ VideoPreviewNode: 检测到 MPEG-4 part 2 编码，浏览器预览可能有问题")
+                        codec_warning = "mpeg4"
+        except Exception as e:
+            _log_warning(f"⚠️ VideoPreviewNode: 无法检测视频编码: {e}")
+
+        video_name = os.path.basename(video_path)
+        video_path_name = os.path.basename(os.path.dirname(video_path))
+
+        # 构建返回的 UI 数据
+        ui_data = {"video": [video_name, video_path_name]}
+
+        # 如果检测到编码问题，添加警告信息
+        if codec_warning:
+            ui_data["codec_warning"] = codec_warning
+            ui_data["video_path"] = video_path  # 添加完整路径用于前端判断
+
+        _log_info(f"🎬 VideoPreviewNode 返回数据: {ui_data}")
+
         # 使用clear参数来清除之前的视频预览
-        return {"ui":{"video":[video_name,video_path_name]}, "clear": True}
+        result = {"ui": ui_data, "clear": True}
+        _log_info(f"🎬 VideoPreviewNode 完整返回: {result}")
+        return result
 
 class VideoUtilitiesUploadLiveVideo:
     @classmethod
@@ -3978,8 +4262,8 @@ class VideoUtilitiesUploadLiveVideo:
     CATEGORY = "Ken-Chen/Video_Utilities"
     DESCRIPTION = "Upload and live video loader with preview functionality"
 
-    RETURN_TYPES = ("IMAGE", "AUDIO", "VHS_FILENAMES", "INT", "STRING",)
-    RETURN_NAMES = ("IMAGE", "AUDIO", "FILENAMES", "FILE_AGE", "STATUS",)
+    RETURN_TYPES = ("IMAGE", "AUDIO", "VHS_FILENAMES", "INT", "INT", "STRING",)
+    RETURN_NAMES = ("IMAGE", "AUDIO", "FILENAMES", "FILE_AGE", "FRAME_COUNT", "STATUS",)
 
     OUTPUT_NODE = False
 
@@ -4165,7 +4449,8 @@ class VideoUtilitiesUploadLiveVideo:
 
         # VHS_FILENAMES 兼容输出（与 Video Combine 节点一致）：(bool, [full_paths])
         vhs_filenames = (True, [video_path]) if os.path.exists(video_path) else (False, [])
-        return (image_tensor, audio, vhs_filenames, file_age, status)
+        frame_count = int(total_frames) if 'total_frames' in locals() else 0
+        return (image_tensor, audio, vhs_filenames, file_age, frame_count, status)
 
 class VideoUtilitiesLoadAFVideo:
     @classmethod
@@ -4178,7 +4463,7 @@ class VideoUtilitiesLoadAFVideo:
             "upload":("VIDEOPLOAD",),
         },
         }
-    
+
     CATEGORY = "Ken-Chen/Video_Utilities"
     DESCRIPTION = "Load Audio/Video File with preview functionality"
 
@@ -4188,8 +4473,48 @@ class VideoUtilitiesLoadAFVideo:
 
     FUNCTION = "load_video"
 
+    @classmethod
+    def IS_CHANGED(s, video):
+        # 返回视频文件的修改时间，确保每次都重新加载
+        video_path = os.path.join(input_dir, video)
+        if os.path.exists(video_path):
+            return os.path.getmtime(video_path)
+        return float("nan")
+
     def load_video(self, video):
         video_path = os.path.join(input_dir,video)
+
+        # 检查视频文件是否存在
+        if not os.path.exists(video_path):
+            _log_error(f"视频文件不存在: {video_path}")
+            return (None, None)
+
+        # 检查视频编码格式，特别是 Topaz 处理的 MPEG-4 视频
+        try:
+            import subprocess
+            probe_cmd = [
+                "ffprobe", "-v", "quiet", "-print_format", "json",
+                "-show_streams", "-select_streams", "v:0", video_path
+            ]
+            probe_result = subprocess.run(probe_cmd, capture_output=True, text=True)
+            if probe_result.returncode == 0:
+                import json
+                probe_data = json.loads(probe_result.stdout)
+                if probe_data.get("streams"):
+                    codec_name = probe_data["streams"][0].get("codec_name", "unknown")
+                    _log_info(f"🎬 检测到视频编码: {codec_name}")
+
+                    # 如果是 MPEG-4 part 2 编码（Topaz 常用），记录警告
+                    if codec_name == "mpeg4":
+                        _log_warning(f"⚠️ 检测到 MPEG-4 part 2 编码（可能来自 Topaz Video AI），某些浏览器可能不支持预览")
+        except Exception as e:
+            _log_warning(f"⚠️ 无法检测视频编码: {e}")
+
+        # 直接返回路径字符串，以保持与其他节点的兼容性
+        # 不使用 VideoFromFile 对象，因为很多节点（如 ProPainter）期望字符串路径
+        video_obj = video_path
+        _log_info(f"✅ Load AF Video 返回路径字符串: {video_path}")
+
         try:
             import subprocess
             with tempfile.NamedTemporaryFile(suffix=".wav",dir=input_dir,delete=False) as aud:
@@ -4210,7 +4535,7 @@ class VideoUtilitiesLoadAFVideo:
                 pass
         except:
             audio = None
-        return (video_path,audio,)
+        return (video_obj,audio,)
 
 class VideoUtilitiesPromptTextNode:
     @classmethod
@@ -4248,8 +4573,8 @@ class VideoUtilitiesLiveVideoMonitor:
     CATEGORY = "Ken-Chen/Video_Utilities"
     DESCRIPTION = "Live video loader that monitors output directory for latest video files"
 
-    RETURN_TYPES = ("IMAGE", "AUDIO", "VHS_FILENAMES", "INT", "STRING",)
-    RETURN_NAMES = ("IMAGE", "AUDIO", "FILENAMES", "FILE_AGE", "STATUS",)
+    RETURN_TYPES = ("IMAGE", "AUDIO", "VHS_FILENAMES", "INT", "INT", "STRING",)
+    RETURN_NAMES = ("IMAGE", "AUDIO", "FILENAMES", "FILE_AGE", "FRAME_COUNT", "STATUS",)
 
     OUTPUT_NODE = True
 
@@ -4296,6 +4621,8 @@ class VideoUtilitiesLiveVideoMonitor:
         try:
             cap = cv2.VideoCapture(latest_video)
             frames = []
+            # 获取总帧数
+            total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT)) if cap else 0
             while True:
                 ret, frame = cap.read()
                 if not ret:
@@ -4334,10 +4661,12 @@ class VideoUtilitiesLiveVideoMonitor:
         if latest_video and os.path.exists(latest_video):
             video_path_name = "output"
             vhs_filenames = (1, [latest_video])
-            return {"ui": {"video": [video_filename, video_path_name]}, "result": (image_tensor, audio, vhs_filenames, file_age, status)}
+            frame_count = int(total_frames) if 'total_frames' in locals() else 0
+            return {"ui": {"video": [video_filename, video_path_name]}, "result": (image_tensor, audio, vhs_filenames, file_age, frame_count, status)}
         else:
             vhs_filenames = (0, [])
-            return {"result": (image_tensor, audio, vhs_filenames, file_age, status)}
+            frame_count = int(total_frames) if 'total_frames' in locals() else 0
+            return {"result": (image_tensor, audio, vhs_filenames, file_age, frame_count, status)}
 
 class VideoUtilitiesRGBEmptyImage:
     @classmethod
