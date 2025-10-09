@@ -3883,7 +3883,7 @@
         }
       ],
       "properties": {
-        "cnr_id": "ComfyUI-GLM4",
+        "cnr_id": "ComfyUI_Video_Utilities",
         "ver": "616343c5e45a4735d129d02dd0e891e2e6f9252e",
         "Node name for S&R": "VideoToGIFNode",
         "ue_properties": {
@@ -3946,7 +3946,7 @@
         }
       ],
       "properties": {
-        "cnr_id": "ComfyUI-GLM4",
+        "cnr_id": "ComfyUI_Video_Utilities",
         "ver": "616343c5e45a4735d129d02dd0e891e2e6f9252e",
         "Node name for S&R": "GetLastFrameNode",
         "ue_properties": {
@@ -4682,7 +4682,7 @@
         }
       ],
       "properties": {
-        "cnr_id": "ComfyUI-GLM4",
+        "cnr_id": "ComfyUI_Video_Utilities",
         "ver": "616343c5e45a4735d129d02dd0e891e2e6f9252e",
         "Node name for S&R": "VideoUtilitiesRGBEmptyImage",
         "ue_properties": {
@@ -4759,7 +4759,7 @@
         }
       ],
       "properties": {
-        "cnr_id": "ComfyUI-GLM4",
+        "cnr_id": "ComfyUI_Video_Utilities",
         "ver": "616343c5e45a4735d129d02dd0e891e2e6f9252e",
         "Node name for S&R": "VideoUtilitiesUploadLiveVideo",
         "ue_properties": {
@@ -4799,7 +4799,7 @@
       ],
       "outputs": [],
       "properties": {
-        "cnr_id": "ComfyUI-GLM4",
+        "cnr_id": "ComfyUI_Video_Utilities",
         "ver": "616343c5e45a4735d129d02dd0e891e2e6f9252e",
         "Node name for S&R": "VideoPreviewNode",
         "ue_properties": {
@@ -4841,7 +4841,7 @@
         }
       ],
       "properties": {
-        "cnr_id": "ComfyUI-GLM4",
+        "cnr_id": "ComfyUI_Video_Utilities",
         "ver": "616343c5e45a4735d129d02dd0e891e2e6f9252e",
         "Node name for S&R": "VideoUtilitiesGetVHSFilePath",
         "ue_properties": {
@@ -4932,7 +4932,7 @@
         }
       ],
       "properties": {
-        "cnr_id": "ComfyUI-GLM4",
+        "cnr_id": "ComfyUI_Video_Utilities",
         "ver": "616343c5e45a4735d129d02dd0e891e2e6f9252e",
         "Node name for S&R": "VideoUtilitiesGetVHSFilePath",
         "ue_properties": {
@@ -5001,7 +5001,7 @@
         }
       ],
       "properties": {
-        "cnr_id": "ComfyUI-GLM4",
+        "cnr_id": "ComfyUI_Video_Utilities",
         "ver": "616343c5e45a4735d129d02dd0e891e2e6f9252e",
         "Node name for S&R": "VideoUtilitiesLiveVideoMonitor",
         "ue_properties": {
@@ -5045,7 +5045,7 @@
         }
       ],
       "properties": {
-        "cnr_id": "ComfyUI-GLM4",
+        "cnr_id": "ComfyUI_Video_Utilities",
         "ver": "616343c5e45a4735d129d02dd0e891e2e6f9252e",
         "Node name for S&R": "VideoUtilitiesPromptTextNode",
         "ue_properties": {
@@ -5169,7 +5169,7 @@
         }
       ],
       "properties": {
-        "cnr_id": "ComfyUI-GLM4",
+        "cnr_id": "ComfyUI_Video_Utilities",
         "ver": "616343c5e45a4735d129d02dd0e891e2e6f9252e",
         "Node name for S&R": "PreviewGIFNode",
         "ue_properties": {
@@ -5210,7 +5210,7 @@
       ],
       "outputs": [],
       "properties": {
-        "cnr_id": "ComfyUI-GLM4",
+        "cnr_id": "ComfyUI_Video_Utilities",
         "ver": "616343c5e45a4735d129d02dd0e891e2e6f9252e",
         "Node name for S&R": "VideoPreviewNode",
         "ue_properties": {
@@ -5330,7 +5330,7 @@
       ],
       "outputs": [],
       "properties": {
-        "cnr_id": "ComfyUI-GLM4",
+        "cnr_id": "ComfyUI_Video_Utilities",
         "ver": "616343c5e45a4735d129d02dd0e891e2e6f9252e",
         "Node name for S&R": "VideoPreviewNode",
         "ue_properties": {
@@ -5668,7 +5668,7 @@
         }
       ],
       "properties": {
-        "cnr_id": "ComfyUI-GLM4",
+        "cnr_id": "ComfyUI_Video_Utilities",
         "ver": "616343c5e45a4735d129d02dd0e891e2e6f9252e",
         "Node name for S&R": "VideoStitchingNode",
         "ue_properties": {
@@ -5728,7 +5728,7 @@
         }
       ],
       "properties": {
-        "cnr_id": "ComfyUI-GLM4",
+        "cnr_id": "ComfyUI_Video_Utilities",
         "ver": "616343c5e45a4735d129d02dd0e891e2e6f9252e",
         "Node name for S&R": "VideoUtilitiesLoadAFVideo",
         "ue_properties": {
@@ -5854,7 +5854,7 @@
       ],
       "outputs": [],
       "properties": {
-        "cnr_id": "ComfyUI-GLM4",
+        "cnr_id": "ComfyUI_Video_Utilities",
         "ver": "616343c5e45a4735d129d02dd0e891e2e6f9252e",
         "Node name for S&R": "VideoPreviewNode",
         "ue_properties": {
@@ -5896,7 +5896,7 @@
         }
       ],
       "properties": {
-        "cnr_id": "ComfyUI-GLM4",
+        "cnr_id": "ComfyUI_Video_Utilities",
         "ver": "616343c5e45a4735d129d02dd0e891e2e6f9252e",
         "Node name for S&R": "VideoUtilitiesGetVHSFilePath",
         "ue_properties": {
@@ -6162,7 +6162,7 @@
         }
       ],
       "properties": {
-        "cnr_id": "ComfyUI-GLM4",
+        "cnr_id": "ComfyUI_Video_Utilities",
         "ver": "616343c5e45a4735d129d02dd0e891e2e6f9252e",
         "Node name for S&R": "GetLastFrameNode",
         "ue_properties": {
