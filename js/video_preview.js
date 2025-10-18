@@ -161,8 +161,8 @@ function addPreviewOptions(nodeType) {
     });
 }
 
-function previewVideo(node,file,type){
-    console.log("previewVideo 函数被调用 - node:", node, "file:", file, "type:", type);
+function previewVideo(node,file,subfolder){
+    console.log("previewVideo 函数被调用 - node:", node, "file:", file, "subfolder:", subfolder);
 
     // 检查是否有编码警告（来自 VideoPreviewNode）
     const hasCodecWarning = node._codecWarning;
@@ -322,26 +322,37 @@ function previewVideo(node,file,type){
         });
     }
 
-    // 处理Type参数 - 将目录名转换为ComfyUI期望的类型
+    // 处理 subfolder 参数
+    // subfolder 可能是实际的子文件夹名（如 "sora_videos"），也可能是类型（如 "input"/"output"）
     let fileType = "output"; // 默认
-    if (type && type.toLowerCase() === "input") {
-        fileType = "input";
-    } else if (type && type.toLowerCase() === "output") {
-        fileType = "output";
+    let actualSubfolder = "";
+
+    if (subfolder) {
+        // 如果 subfolder 是 "input" 或 "output"，则作为 type 使用
+        if (subfolder.toLowerCase() === "input") {
+            fileType = "input";
+        } else if (subfolder.toLowerCase() === "output") {
+            fileType = "output";
+        } else {
+            // 否则作为实际的子文件夹名
+            actualSubfolder = subfolder;
+        }
     }
-    
+
     let params =  {
         "filename": file,
         "type": fileType,
+        "subfolder": actualSubfolder,
     }
-    
+
     // 调试信息
-    console.log("Preview Video - file:", file, "type:", type, "fileType:", fileType);
+    console.log("Preview Video - file:", file, "subfolder:", subfolder, "fileType:", fileType, "actualSubfolder:", actualSubfolder);
     console.log("Preview Video - params:", params);
     
     previewWidget.parentEl.hidden = previewWidget.value.hidden;
     if (!isGif && previewWidget.videoEl) {
-        previewWidget.videoEl.autoplay = !previewWidget.value.paused && !previewWidget.value.hidden;
+        // 禁用自动播放，由用户控制
+        previewWidget.videoEl.autoplay = false;
     }
     
     let target_width = 256;
