@@ -564,13 +564,39 @@ def video_to_comfyui_video(video_path: str):
         return None
 
 def extract_video_path(video):
-    """从VIDEO对象提取文件路径 - 通用函数"""
+    """从VIDEO对象提取文件路径 - 通用函数，支持多种VIDEO类型"""
     _log_info(f"🔍 尝试从VIDEO对象提取路径: {type(video)}")
 
     # 如果是字符串，直接返回
     if isinstance(video, str):
         _log_info(f"✅ 直接字符串路径: {video}")
         return video
+
+    # 如果是 VHS 的 VIDEO 对象（通常是字典）
+    if isinstance(video, dict):
+        # VHS 的 VIDEO 对象可能包含 'filename' 和 'subfolder' 键
+        if 'filename' in video:
+            filename = video['filename']
+            subfolder = video.get('subfolder', '')
+            video_type = video.get('type', 'output')  # 'output', 'input', 'temp'
+
+            # 构建完整路径
+            if video_type == 'output':
+                base_dir = folder_paths.get_output_directory()
+            elif video_type == 'input':
+                base_dir = folder_paths.get_input_directory()
+            elif video_type == 'temp':
+                base_dir = folder_paths.get_temp_directory()
+            else:
+                base_dir = folder_paths.get_output_directory()
+
+            if subfolder:
+                video_path = os.path.join(base_dir, subfolder, filename)
+            else:
+                video_path = os.path.join(base_dir, filename)
+
+            _log_info(f"✅ 从 VHS VIDEO 字典提取路径: {video_path}")
+            return video_path
 
     # 打印对象的所有属性（调试用）
     try:
@@ -581,6 +607,7 @@ def extract_video_path(video):
 
     # 尝试常见的文件路径属性
     path_attributes = [
+        'saved_path',   # ComfyUI VideoFromFile 对象的保存路径
         'file_path',    # 我们自己的VideoFromFile对象
         'filename',     # 一些节点使用这个
         'file',         # 向后兼容

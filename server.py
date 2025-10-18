@@ -264,41 +264,42 @@ try:
             'ffmpeg_path': ffmpeg_path
         })
 
-    # 拦截 /api/view 请求，如果是视频文件则转发到转码端点
-    original_view_handler = None
-    for route in PromptServer.instance.routes._resources:
-        if hasattr(route, '_path') and route._path == '/view':
-            for route_info in route:
-                if route_info.method == 'GET':
-                    original_view_handler = route_info.handler
-                    break
-            break
+    # 注释掉拦截 /api/view 的代码，因为我们已经有了 /video_utilities/viewvideo 端点
+    # 并且访问 routes._resources 会导致 AttributeError
+    # original_view_handler = None
+    # for route in PromptServer.instance.routes._resources:
+    #     if hasattr(route, '_path') and route._path == '/view':
+    #         for route_info in route:
+    #             if route_info.method == 'GET':
+    #                 original_view_handler = route_info.handler
+    #                 break
+    #         break
 
-    @PromptServer.instance.routes.get("/api/view")
-    async def intercept_view(request):
-        """拦截 /api/view 请求，视频文件转发到转码端点"""
-        query = request.rel_url.query
-        filename = query.get('filename', '')
-
-        # 检查是否是视频文件
-        video_extensions = ['.mp4', '.webm', '.mkv', '.avi', '.mov', '.flv', '.wmv']
-        is_video = any(filename.lower().endswith(ext) for ext in video_extensions)
-
-        if is_video:
-            print(f"🎬 Intercepting /api/view for video: {filename}")
-            print(f"🎬 Redirecting to /video_utilities/viewvideo")
-            # 转发到转码端点
-            return await view_video_transcoded(request)
-        else:
-            # 非视频文件，使用原始处理器
-            if original_view_handler:
-                return await original_view_handler(request)
-            else:
-                return web.Response(status=404, text="Not found")
+    # @PromptServer.instance.routes.get("/api/view")
+    # async def intercept_view(request):
+    #     """拦截 /api/view 请求，视频文件转发到转码端点"""
+    #     query = request.rel_url.query
+    #     filename = query.get('filename', '')
+    #
+    #     # 检查是否是视频文件
+    #     video_extensions = ['.mp4', '.webm', '.mkv', '.avi', '.mov', '.flv', '.wmv']
+    #     is_video = any(filename.lower().endswith(ext) for ext in video_extensions)
+    #
+    #     if is_video:
+    #         print(f"🎬 Intercepting /api/view for video: {filename}")
+    #         print(f"🎬 Redirecting to /video_utilities/viewvideo")
+    #         # 转发到转码端点
+    #         return await view_video_transcoded(request)
+    #     else:
+    #         # 非视频文件，使用原始处理器
+    #         if original_view_handler:
+    #             return await original_view_handler(request)
+    #         else:
+    #             return web.Response(status=404, text="Not found")
 
     print("✅ Video Utilities server routes loaded successfully")
     print("✅ Test endpoint: http://127.0.0.1:8188/video_utilities/test")
-    print("✅ Intercepting /api/view for video files")
+    # print("✅ Intercepting /api/view for video files")  # 已禁用拦截功能
 
 except Exception as e:
     print(f"❌ Video Utilities: Failed to load server routes: {e}")
