@@ -28,12 +28,47 @@ function setMediaSrc(el, filename, dirName) {
     const ext = (filename.split('.').pop() || '').toLowerCase();
     const params = new URLSearchParams({ filename, type: dirName.toLowerCase() });
 
-    // 直接使用转码端点（模仿 VHS 的做法）
+    // 智能选择端点：通过 API 检测视频编码，MPEG-4 视频使用转码
     let url;
     if (ext === 'gif') {
         url = api.apiURL('/view?' + params);
     } else {
-        url = api.apiURL('/video_utilities/viewvideo?' + params);
+        // 异步检测编码并设置视频源
+        (async () => {
+            try {
+                // 调用编码检测 API
+                const detectUrl = api.apiURL('/video_utilities/detect_codec?' + params);
+
+                const response = await fetch(detectUrl);
+                const data = await response.json();
+
+                const needsTranscode = data.needs_transcode || false;
+                const codec = data.codec || 'unknown';
+
+                const endpoint = needsTranscode ? '/video_utilities/viewvideo' : '/view';
+                url = api.apiURL(endpoint + '?' + params);
+
+                console.log("🎬 GIF_Preview: File:", filename);
+                console.log("🎬 GIF_Preview: Codec:", codec);
+                console.log("🎬 GIF_Preview: Needs transcode:", needsTranscode);
+
+                // 重新设置视频源
+                const video = el.querySelector('video');
+                if (video) {
+                    video.src = url;
+                }
+            } catch (error) {
+                console.warn("⚠️ GIF_Preview: Codec detection failed, using /view:", error);
+                url = api.apiURL('/view?' + params);
+                const video = el.querySelector('video');
+                if (video) {
+                    video.src = url;
+                }
+            }
+        })();
+
+        // 先设置一个临时的 URL
+        url = api.apiURL('/view?' + params);
     }
 
     if (ext === 'gif') {

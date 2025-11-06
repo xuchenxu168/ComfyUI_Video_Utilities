@@ -2,8 +2,8 @@ import { app } from "../../../scripts/app.js";
 import { api } from '../../../scripts/api.js'
 import { ComfyWidgets } from "../../../scripts/widgets.js"
 
-// VERSION: 2025-01-08-TRANSCODE-FIX
-console.log("🎬 Upload Live Video JS loaded - TRANSCODE VERSION");
+// VERSION: 2025-01-08-WORKING
+console.log("🎬 Upload Live Video JS loaded - WORKING VERSION");
 
 // Add CSS styles to ensure proper video display
 const style = document.createElement('style');
@@ -125,6 +125,12 @@ function previewVideo(node, file) {
         return;
     }
 
+    // 取消之前的异步操作
+    if (node._abortController) {
+        node._abortController.abort();
+    }
+    node._abortController = new AbortController();
+
     // 标记正在加载
     node._currentVideoFile = file;
     node._videoLoading = true;
@@ -172,11 +178,13 @@ function previewVideo(node, file) {
     previewWidget.videoEl.controls = true;
     previewWidget.videoEl.loop = false;
     previewWidget.videoEl.muted = false;
+    previewWidget.videoEl.autoplay = false; // 禁用自动播放，由用户控制
     previewWidget.videoEl.style['width'] = "100%";
-    previewWidget.videoEl.style['height'] = "auto"; // 让视频保持原始比例
+    previewWidget.videoEl.style['minHeight'] = "200px";
+    previewWidget.videoEl.style['height'] = "auto";
     previewWidget.videoEl.style['display'] = "block";
     previewWidget.videoEl.style['position'] = "relative";
-    previewWidget.videoEl.style['object-fit'] = "contain"; // 保持比例
+    previewWidget.videoEl.style['backgroundColor'] = "#000";
     previewWidget.videoEl.style['margin'] = "0";
     previewWidget.videoEl.style['padding'] = "0";
     previewWidget.videoEl.setAttribute("data-node-id", node.id);
@@ -217,78 +225,77 @@ function previewVideo(node, file) {
         // 标记加载完成（即使失败）
         node._videoLoading = false;
 
-        console.log("❌ Video loading error:", e);
-        console.error("❌ Video error details:", previewWidget.videoEl.error);
+        console.error("❌ Upload_Live_Video: Video loading error:", e);
+        console.error("❌ Upload_Live_Video: Video error details:", previewWidget.videoEl.error);
+        console.error("❌ Upload_Live_Video: Video src:", previewWidget.videoEl.src);
+        console.error("❌ Upload_Live_Video: File:", file);
 
-        // 检查是否是格式不支持的错误
-        if (previewWidget.videoEl.error && previewWidget.videoEl.error.code === MediaError.MEDIA_ERR_SRC_NOT_SUPPORTED) {
-            console.warn("Video format not supported by browser");
-
-            // 检查是否是 Topaz 处理的视频
-            const isTopazVideo = file.toLowerCase().includes('topaz');
-
-            if (isTopazVideo) {
-                // 创建 Topaz 特定的错误提示
-                const errorDiv = document.createElement("div");
-                errorDiv.style.cssText = `
-                    padding: 12px;
-                    background: linear-gradient(135deg, #2d3748, #4a5568);
-                    color: #fff;
-                    text-align: center;
-                    border-radius: 6px;
-                    font-size: 12px;
-                    border: 1px solid #718096;
-                `;
-                errorDiv.innerHTML = `
-                    🎬 Topaz Video Preview Unavailable<br>
-                    <small>MPEG-4 encoding not supported in browser<br>
-                    Video will work in ComfyUI workflows</small>
-                `;
-
-                if (previewWidget.videoEl.parentNode) {
-                    previewWidget.videoEl.parentNode.removeChild(previewWidget.videoEl);
-                }
-                previewWidget.parentEl.appendChild(errorDiv);
-
-                previewWidget.computeSize = function (width) {
-                    return [width, 80];
-                };
-                fitHeight(previewNode);
-                return;
-            }
-        }
-
+        // 不再显示 Topaz 特定的错误提示，因为我们已经有转码功能了
+        // 只是隐藏视频元素
         previewWidget.parentEl.hidden = true;
         fitHeight(previewNode);
     });
 
     let actualFilename = file;
     let fileType = "input";
+
+    // 处理前缀格式：[Output] filename 或 [Input] filename
     if (file.startsWith("[Output] ")) {
         actualFilename = file.substring(9);
         fileType = "output";
     } else if (file.startsWith("[Input] ")) {
         actualFilename = file.substring(8);
         fileType = "input";
+    }
+    // 处理后缀格式：filename [output] 或 filename [input]（upload widget 格式）
+    else if (file.endsWith(" [output]")) {
+        actualFilename = file.substring(0, file.length - 9);
+        fileType = "output";
+    } else if (file.endsWith(" [input]")) {
+        actualFilename = file.substring(0, file.length - 8);
+        fileType = "input";
     } else if (file.startsWith("--- ") || file === "No video files found") {
         previewWidget.parentEl.hidden = true;
         fitHeight(previewNode);
         return;
     }
-    
+
+    // 处理子文件夹路径（例如 "sora_videos/video.mp4"）
+    let subfolder = "";
+    let filename = actualFilename;
+    if (actualFilename.includes("/")) {
+        const parts = actualFilename.split("/");
+        filename = parts.pop(); // 最后一部分是文件名
+        subfolder = parts.join("/"); // 其余部分是子文件夹
+    }
+
+    console.log("🎬 Upload_Live_Video 路径解析:");
+    console.log("   - file:", file);
+    console.log("   - actualFilename:", actualFilename);
+    console.log("   - filename:", filename);
+    console.log("   - subfolder:", subfolder);
+    console.log("   - fileType:", fileType);
+
     let params = {
-        "filename": actualFilename,
+        "filename": filename,
         "type": fileType,
     }
-    
+
+    // 只有当 subfolder 不为空时才添加
+    if (subfolder) {
+        params.subfolder = subfolder;
+    }
+
+    console.log("   - params:", params);
+
     previewWidget.parentEl.hidden = previewWidget.value.hidden;
     previewWidget.videoEl.autoplay = !previewWidget.value.paused && !previewWidget.value.hidden;
-    
+
     let target_width = 256;
     if (element.style?.width) {
         target_width = element.style.width.slice(0, -2) * 2;
     }
-    
+
     if (!params.force_size || params.force_size.includes("?") || params.force_size == "Disabled") {
         params.force_size = target_width + "x?";
     } else {
@@ -296,15 +303,103 @@ function previewVideo(node, file) {
         let ar = parseInt(size[0]) / parseInt(size[1]);
         params.force_size = target_width + "x" + (target_width / ar);
     }
-    
+
     // Set video source and append to parent
-    // 直接使用转码端点（模仿 VHS 的做法）
-    const videoUrl = api.apiURL('/video_utilities/viewvideo?' + new URLSearchParams(params));
-    console.log("🎬 Setting video URL to:", videoUrl);
-    console.log("🎬 Params:", params);
-    previewWidget.videoEl.src = videoUrl;
-    previewWidget.videoEl.hidden = false;
-    previewWidget.parentEl.appendChild(previewWidget.videoEl);
+    // 智能选择端点：通过 API 检测视频编码，MPEG-4 视频使用转码
+    params._t = Date.now();
+
+    // 异步检测编码并设置视频源
+    (async () => {
+        try {
+            // 检查是否已被取消
+            if (node._abortController.signal.aborted) {
+                console.log("🎬 Upload_Live_Video: Async operation aborted");
+                return;
+            }
+
+            // 调用编码检测 API
+            const detectParams = {
+                filename: filename,
+                type: params.type || 'input'
+            };
+            // 如果有 subfolder，也传递给 API
+            if (subfolder) {
+                detectParams.subfolder = subfolder;
+            }
+            const detectUrl = api.apiURL('/video_utilities/detect_codec?' + new URLSearchParams(detectParams));
+
+            console.log("🎬 Upload_Live_Video: Detecting codec...");
+            console.log("   - detectUrl:", detectUrl);
+            console.log("   - detectParams:", detectParams);
+
+            const response = await fetch(detectUrl, { signal: node._abortController.signal });
+            const data = await response.json();
+
+            const needsTranscode = data.needs_transcode || false;
+            const codec = data.codec || 'unknown';
+
+            // 再次检查是否已被取消
+            if (node._abortController.signal.aborted) {
+                console.log("🎬 Upload_Live_Video: Async operation aborted before setting src");
+                return;
+            }
+
+            const endpoint = needsTranscode ? '/video_utilities/viewvideo' : '/view';
+            const videoUrl = api.apiURL(endpoint + '?' + new URLSearchParams(params));
+
+            console.log("🎬 Upload_Live_Video: File:", filename);
+            console.log("🎬 Upload_Live_Video: Codec:", codec);
+            console.log("🎬 Upload_Live_Video: Needs transcode:", needsTranscode);
+            console.log("🎬 Upload_Live_Video: Using endpoint:", endpoint);
+            console.log("🎬 Upload_Live_Video: Video URL:", videoUrl);
+
+            // 先设置 src
+            previewWidget.videoEl.src = videoUrl;
+            // 强制禁用自动播放
+            previewWidget.videoEl.autoplay = false;
+            // 然后添加到 DOM（模仿备份文件的做法）
+            previewWidget.videoEl.hidden = false;
+            previewWidget.parentEl.appendChild(previewWidget.videoEl);
+        } catch (error) {
+            // 忽略 AbortError（操作被取消）
+            if (error.name === 'AbortError') {
+                console.log("🎬 Upload_Live_Video: Fetch aborted");
+                return;
+            }
+
+            console.warn("⚠️ Upload_Live_Video: Codec detection failed, using /video_utilities/viewvideo for safety:", error);
+
+            // 检查是否已被取消
+            if (node._abortController.signal.aborted) {
+                return;
+            }
+
+            // 如果检测失败，使用转码端点以确保兼容性（特别是对于 Topaz 视频）
+            const videoUrl = api.apiURL('/video_utilities/viewvideo?' + new URLSearchParams(params));
+            console.log("🎬 Upload_Live_Video: Fallback URL:", videoUrl);
+            // 先设置 src
+            previewWidget.videoEl.src = videoUrl;
+            // 强制禁用自动播放
+            previewWidget.videoEl.autoplay = false;
+            // 然后添加到 DOM
+            previewWidget.videoEl.hidden = false;
+            previewWidget.parentEl.appendChild(previewWidget.videoEl);
+        }
+    })();
+
+    // 添加错误处理
+    previewWidget.videoEl.onerror = function(e) {
+        console.error("🎬 Upload_Live_Video: Video load error:", e);
+        console.error("🎬 Upload_Live_Video: Video src:", previewWidget.videoEl.src);
+        console.error("🎬 Upload_Live_Video: Video error code:", previewWidget.videoEl.error?.code);
+        console.error("🎬 Upload_Live_Video: Video error message:", previewWidget.videoEl.error?.message);
+    };
+
+    previewWidget.videoEl.onloadedmetadata = function() {
+        console.log("🎬 Upload_Live_Video: Video metadata loaded successfully");
+        console.log("🎬 Upload_Live_Video: Video duration:", previewWidget.videoEl.duration);
+        console.log("🎬 Upload_Live_Video: Video dimensions:", previewWidget.videoEl.videoWidth, "x", previewWidget.videoEl.videoHeight);
+    };
     
     // 强制多次更新尺寸以确保正确渲染
     setTimeout(() => {

@@ -68,6 +68,7 @@ function preview(node, filename, type) {
   videoEl.controls = true;
   videoEl.loop = false;
   videoEl.muted = false;
+  videoEl.autoplay = false; // 禁用自动播放，由用户控制
   videoEl.preload = "metadata";
   parentEl.appendChild(videoEl);
 
@@ -86,8 +87,36 @@ function preview(node, filename, type) {
     type: (type?.toLowerCase?.() === "input") ? "input" : "output",
   });
 
-  // 直接使用转码端点（模仿 VHS 的做法）
-  videoEl.src = api.apiURL('/video_utilities/viewvideo?' + params.toString());
+  // 智能选择端点：通过 API 检测视频编码，MPEG-4 视频使用转码
+  (async () => {
+    try {
+      // 调用编码检测 API
+      const detectUrl = api.apiURL('/video_utilities/detect_codec?' + new URLSearchParams({
+        filename: filename,
+        type: (type?.toLowerCase?.() === "input") ? "input" : "output"
+      }));
+
+      const response = await fetch(detectUrl);
+      const data = await response.json();
+
+      const needsTranscode = data.needs_transcode || false;
+      const codec = data.codec || 'unknown';
+
+      const endpoint = needsTranscode ? '/video_utilities/viewvideo' : '/view';
+      videoEl.src = api.apiURL(endpoint + '?' + params.toString());
+      // 强制禁用自动播放
+      videoEl.autoplay = false;
+
+      console.log("🎬 Live_Video_Monitor: File:", filename);
+      console.log("🎬 Live_Video_Monitor: Codec:", codec);
+      console.log("🎬 Live_Video_Monitor: Needs transcode:", needsTranscode);
+    } catch (error) {
+      console.warn("⚠️ Live_Video_Monitor: Codec detection failed, using /view:", error);
+      videoEl.src = api.apiURL('/view?' + params.toString());
+      // 强制禁用自动播放
+      videoEl.autoplay = false;
+    }
+  })();
 }
 
 app.registerExtension({

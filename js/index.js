@@ -12,6 +12,7 @@ import "./upload_live_video_v2.js";
 import "./live_video_monitor.js";
 import "./prompt_text_node.js";
 import "./rgb_empty_image.js";
+import "./color_picker.js";
 
 console.log("[Video_Utilities] 🎬 All extension modules imported");
 

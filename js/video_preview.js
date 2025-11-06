@@ -2,7 +2,7 @@ import { app } from "../../../scripts/app.js";
 import { api } from '../../../scripts/api.js'
 
 console.log("=".repeat(80));
-console.log("🎬🎬🎬 VIDEO PREVIEW JAVASCRIPT FILE LOADED - VERSION 2.0 🎬🎬🎬");
+console.log("🎬🎬🎬 VIDEO PREVIEW JAVASCRIPT FILE LOADED - VERSION 2.1 - NO AUTOPLAY 🎬🎬🎬");
 console.log("=".repeat(80));
 
 // Add CSS styles to ensure proper video display
@@ -230,6 +230,7 @@ function previewVideo(node,file,subfolder){
         previewWidget.videoEl.controls = true;
         previewWidget.videoEl.loop = false;
         previewWidget.videoEl.muted = false;
+        previewWidget.videoEl.autoplay = false; // 禁用自动播放，由用户控制
         previewWidget.videoEl.style['width'] = "100%"
         previewWidget.videoEl.setAttribute("data-node-id", node.id);
         previewWidget.videoEl.setAttribute("preload", "metadata");
@@ -342,7 +343,11 @@ function previewVideo(node,file,subfolder){
     let params =  {
         "filename": file,
         "type": fileType,
-        "subfolder": actualSubfolder,
+    }
+
+    // 只有当 actualSubfolder 不为空时才添加 subfolder 参数
+    if (actualSubfolder) {
+        params.subfolder = actualSubfolder;
     }
 
     // 调试信息
@@ -369,13 +374,66 @@ function previewVideo(node,file,subfolder){
         params.force_size = target_width+"x"+(target_width/ar);
     }
     
-    // 使用转码端点
+    // 智能选择端点：通过 API 检测视频编码，MPEG-4 视频使用转码
     let mediaUrl;
     if (isGif) {
         mediaUrl = api.apiURL('/view?' + new URLSearchParams(params));
     } else {
-        // 强制使用转码端点
-        mediaUrl = api.apiURL('/video_utilities/viewvideo?' + new URLSearchParams(params));
+        // 异步检测编码并设置视频源
+        const filename = params.filename || '';
+
+        (async () => {
+            try {
+                // 如果 Python 端已经检测到编码警告，直接使用转码
+                if (hasCodecWarning) {
+                    console.log("🎬 Video_Preview: Has codec warning, using transcode");
+                    const videoUrl = api.apiURL('/video_utilities/viewvideo?' + new URLSearchParams(params));
+                    previewWidget.videoEl.src = videoUrl;
+                    // 强制禁用自动播放
+                    previewWidget.videoEl.autoplay = false;
+                    return;
+                }
+
+                // 调用编码检测 API
+                const detectParams = {
+                    filename: filename,
+                    type: params.type || 'output'
+                };
+                // 如果有 subfolder，也传递给 API
+                if (params.subfolder) {
+                    detectParams.subfolder = params.subfolder;
+                }
+                const detectUrl = api.apiURL('/video_utilities/detect_codec?' + new URLSearchParams(detectParams));
+
+                const response = await fetch(detectUrl);
+                const data = await response.json();
+
+                const needsTranscode = data.needs_transcode || false;
+                const codec = data.codec || 'unknown';
+
+                const endpoint = needsTranscode ? '/video_utilities/viewvideo' : '/view';
+                const videoUrl = api.apiURL(endpoint + '?' + new URLSearchParams(params));
+
+                console.log("🎬 Video_Preview: File:", filename);
+                console.log("🎬 Video_Preview: Codec:", codec);
+                console.log("🎬 Video_Preview: Needs transcode:", needsTranscode);
+                console.log("🎬 Video_Preview: Using endpoint:", endpoint);
+
+                previewWidget.videoEl.src = videoUrl;
+                // 强制禁用自动播放
+                previewWidget.videoEl.autoplay = false;
+            } catch (error) {
+                console.warn("⚠️ Video_Preview: Codec detection failed, using /video_utilities/viewvideo for safety:", error);
+                // 如果检测失败，使用转码端点以确保兼容性（特别是对于 Topaz 视频）
+                const videoUrl = api.apiURL('/video_utilities/viewvideo?' + new URLSearchParams(params));
+                previewWidget.videoEl.src = videoUrl;
+                // 强制禁用自动播放
+                previewWidget.videoEl.autoplay = false;
+            }
+        })();
+
+        // 先设置一个临时的 URL，避免视频元素为空
+        mediaUrl = api.apiURL('/view?' + new URLSearchParams(params));
     }
 
     if (isGif) {
