@@ -19,6 +19,7 @@ from typing import Optional, Dict, Any, List, Tuple
 import urllib3
 import ssl
 import glob
+import torchaudio
 
 # 导入 ComfyUI 的文件夹路径
 try:
@@ -3851,6 +3852,315 @@ class GetLastFrameNode:
             return None
 
 
+class GetFirstFrameNode:
+    """提取任意视频首帧的独立节点"""
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "video": ("VIDEO",),
+            },
+            "optional": {
+                "output_filename": ("STRING", {"default": ""}),
+                "image_quality": (["high", "medium", "low"], {"default": "high"}),
+                "offset_from_first": ("INT", {"default": 0, "min": 0, "max": 100000, "step": 1, "tooltip": "从首帧开始的偏移帧数（0=首帧，1=第2帧，2=第3帧...）"}),
+            }
+        }
+
+    RETURN_TYPES = ("IMAGE", "STRING")
+    RETURN_NAMES = ("first_frame_image", "frame_path")
+    FUNCTION = "extract_first_frame"
+    CATEGORY = "Ken-Chen/Video_Utilities"
+
+    def __init__(self):
+        self.timeout = 60  # 1分钟超时
+
+    def extract_first_frame(self, video, output_filename="", image_quality="high", offset_from_first=0):
+        """
+        提取视频的第一帧或从首帧起第N帧（0表示首帧）
+
+        Args:
+            video: ComfyUI VIDEO对象
+            output_filename: 输出文件名（可选）
+            image_quality: 图像质量设置
+            offset_from_first: 从首帧起的偏移帧数（0=首帧，1=第2帧，2=第3帧...）
+
+        Returns:
+            tuple: (图像张量, 图像文件路径)
+        """
+        try:
+            _log_info("🎬 开始提取视频首帧...")
+
+            # 获取视频文件路径 - 使用改进的提取方法
+            video_path = self._extract_video_path(video)
+
+            if not video_path:
+                error_msg = f"无法获取有效的视频文件路径: {video_path}"
+                _log_error(error_msg)
+                _log_error(f"视频对象详情: type={type(video)}, repr={repr(video)}")
+                # 返回空白图像和错误信息
+                blank_image = self._create_blank_image()
+                return (blank_image, f"❌ {error_msg}")
+
+            if not os.path.exists(video_path):
+                error_msg = f"视频文件不存在: {video_path}"
+                _log_error(error_msg)
+                blank_image = self._create_blank_image()
+                return (blank_image, f"❌ {error_msg}")
+
+            _log_info(f"📹 视频文件路径: {video_path}")
+
+            # 生成输出文件路径
+            if not output_filename:
+                video_name = os.path.splitext(os.path.basename(video_path))[0]
+                if offset_from_first and offset_from_first > 0:
+                    output_filename = f"{video_name}_frame_{offset_from_first}.jpg"
+                else:
+                    output_filename = f"{video_name}_first_frame.jpg"
+
+            # 确保输出文件名有正确的扩展名
+            if not output_filename.lower().endswith(('.jpg', '.jpeg', '.png')):
+                output_filename += '.jpg'
+
+            # 使用临时目录
+            import tempfile
+            temp_dir = tempfile.gettempdir()
+            output_path = os.path.join(temp_dir, f"{int(time.time())}_{output_filename}")
+
+            # 设置图像质量参数
+            quality_settings = {
+                "high": ["-q:v", "2"],      # 高质量
+                "medium": ["-q:v", "5"],    # 中等质量
+                "low": ["-q:v", "8"]        # 低质量
+            }
+            quality_params = quality_settings.get(image_quality, quality_settings["high"])
+
+            # 提取指定帧（从首帧开始偏移）
+            frame_index = max(0, int(offset_from_first or 0))
+            frame_path = self._extract_frame_by_index(video_path, output_path, quality_params, frame_index)
+
+            # 如果按索引提取失败，尝试按时间提取
+            if not frame_path and offset_from_first and offset_from_first > 0:
+                # 使用fps估算时间定位
+                _, fps = self._get_duration_and_fps(video_path)
+                if fps:
+                    seek_time = float(offset_from_first) / float(fps)
+                    frame_path = self._extract_frame_by_time(video_path, output_path, quality_params, seek_time)
+
+            # 最后兜底：提取首帧（时间0）
+            if not frame_path:
+                frame_path = self._extract_frame_by_time(video_path, output_path, quality_params, 0.0)
+
+            if not frame_path:
+                error_msg = "首帧提取失败"
+                _log_error(error_msg)
+                blank_image = self._create_blank_image()
+                return (blank_image, f"❌ {error_msg}")
+
+            # 将图像转换为ComfyUI张量格式
+            image_tensor = self._load_image_as_tensor(frame_path)
+
+            if image_tensor is None:
+                error_msg = "图像加载失败"
+                _log_error(error_msg)
+                blank_image = self._create_blank_image()
+                return (blank_image, f"❌ {error_msg}")
+
+            _log_info(f"✅ 首帧提取成功: {frame_path}")
+            return (image_tensor, frame_path)
+
+        except Exception as e:
+            error_msg = f"提取视频首帧失败: {str(e)}"
+            _log_error(error_msg)
+            blank_image = self._create_blank_image()
+            return (blank_image, f"❌ {error_msg}")
+
+    def _extract_frame_by_index(self, video_path, output_path, quality_params, frame_index):
+        """使用帧索引提取指定帧（0-based）"""
+        try:
+            import subprocess
+            # 使用select=eq(n,frame_index) 精确选帧
+            vf_expr = f"select='eq(n,{int(frame_index)})'"
+            cmd = [
+                'ffmpeg',
+                '-i', video_path,
+                '-vf', vf_expr,
+                '-vsync', 'vfr',
+                '-frames:v', '1',
+            ] + quality_params + [
+                '-y',
+                output_path
+            ]
+            _log_info(f"🔧 按索引提取帧: index={frame_index}, cmd={' '.join(cmd)}")
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=self.timeout)
+            if result.returncode == 0 and os.path.exists(output_path):
+                return output_path
+            return None
+        except Exception as e:
+            _log_error(f"按索引提取失败: {str(e)}")
+            return None
+
+    def _extract_frame_by_time(self, video_path, output_path, quality_params, seek_time):
+        """按时间定位提取单帧（seek_time为秒）"""
+        try:
+            import subprocess
+            cmd = [
+                'ffmpeg',
+                '-ss', f"{seek_time}",
+                '-i', video_path,
+                '-frames:v', '1',
+            ] + quality_params + [
+                '-y',
+                output_path
+            ]
+            _log_info(f"🔧 按时间提取帧: t={seek_time:.3f}s, cmd={' '.join(cmd)}")
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=self.timeout)
+            if result.returncode == 0 and os.path.exists(output_path):
+                return output_path
+            return None
+        except Exception as e:
+            _log_error(f"按时间提取失败: {str(e)}")
+            return None
+
+    def _get_duration_and_fps(self, video_path):
+        """返回(duration_seconds, fps) 或 (None, None)"""
+        try:
+            import subprocess, json
+            # 获取时长和帧率
+            cmd = [
+                'ffprobe',
+                '-v', 'error',
+                '-select_streams', 'v:0',
+                '-show_entries', 'stream=avg_frame_rate:format=duration',
+                '-of', 'json',
+                video_path
+            ]
+            res = subprocess.run(cmd, capture_output=True, text=True, timeout=20)
+            if res.returncode == 0 and res.stdout:
+                data = json.loads(res.stdout)
+                duration = None
+                fps = None
+                if 'format' in data and 'duration' in data['format']:
+                    try:
+                        duration = float(data['format']['duration'])
+                    except:
+                        duration = None
+                if 'streams' in data and data['streams']:
+                    afr = data['streams'][0].get('avg_frame_rate')
+                    if afr and afr != '0/0':
+                        try:
+                            num, den = afr.split('/')
+                            num = float(num)
+                            den = float(den) if float(den) != 0 else 1.0
+                            fps = num / den if den else None
+                        except:
+                            fps = None
+                return duration, fps
+        except Exception as e:
+            _log_warning(f"无法获取时长与FPS: {str(e)}")
+        return None, None
+
+    def _load_image_as_tensor(self, image_path):
+        """将图像文件加载为ComfyUI张量格式"""
+        try:
+            from PIL import Image
+            import numpy as np
+            import torch
+
+            # 使用PIL加载图像
+            with Image.open(image_path) as img:
+                # 转换为RGB格式
+                if img.mode != 'RGB':
+                    img = img.convert('RGB')
+
+                # 转换为numpy数组
+                img_array = np.array(img).astype(np.float32) / 255.0
+
+                # 添加batch维度 [H, W, C] -> [1, H, W, C]
+                img_array = np.expand_dims(img_array, axis=0)
+
+                # 转换为torch张量（ComfyUI期望的格式）
+                img_tensor = torch.from_numpy(img_array)
+
+                _log_info(f"✅ 图像张量格式: {img_tensor.shape}, dtype: {img_tensor.dtype}")
+                return img_tensor
+
+        except Exception as e:
+            _log_error(f"图像加载失败: {str(e)}")
+            return None
+
+    def _extract_video_path(self, video):
+        """从VIDEO对象提取文件路径"""
+        _log_info(f"🔍 尝试从VIDEO对象提取路径: {type(video)}")
+
+        # 如果是字符串，直接返回
+        if isinstance(video, str):
+            _log_info(f"✅ 直接字符串路径: {video}")
+            return video
+
+        # 尝试常见的文件路径属性
+        path_attributes = [
+            'file_path',    # 我们自己的VideoFromFile对象
+            'filename',     # 一些节点使用这个
+            'file',         # 向后兼容
+            'path',         # 通用路径属性
+            'filepath',     # 文件路径
+            'video_path',   # 视频路径
+            'source',       # 源文件
+            'url',          # URL路径
+            'video_file',   # 视频文件
+            'file_name',    # 文件名
+        ]
+
+        for attr in path_attributes:
+            if hasattr(video, attr):
+                value = getattr(video, attr)
+                if value and isinstance(value, str):
+                    _log_info(f"✅ 从属性 {attr} 获取路径: {value}")
+                    return value
+                elif value:
+                    _log_info(f"⚠️ 属性 {attr} 存在但不是字符串: {type(value)} = {value}")
+
+        # 如果是字典类型，尝试从字典中获取路径
+        if isinstance(video, dict):
+            for key in ['file_path', 'filename', 'path', 'url', 'source']:
+                if key in video and isinstance(video[key], str):
+                    _log_info(f"✅ 从字典键 {key} 获取路径: {video[key]}")
+                    return video[key]
+
+        # 如果有__dict__属性，打印所有属性用于调试
+        if hasattr(video, '__dict__'):
+            _log_info(f"🔍 VIDEO对象属性: {list(video.__dict__.keys())}")
+            for key, value in video.__dict__.items():
+                if isinstance(value, str) and ('path' in key.lower() or 'file' in key.lower() or 'url' in key.lower()):
+                    _log_info(f"✅ 从__dict__属性 {key} 获取路径: {value}")
+                    return value
+
+        # 最后尝试：如果对象可以转换为字符串且看起来像路径
+        try:
+            str_repr = str(video)
+            if str_repr and ('/' in str_repr or '\\' in str_repr or str_repr.endswith('.mp4')):
+                _log_info(f"✅ 从字符串表示获取路径: {str_repr}")
+                return str_repr
+        except:
+            pass
+
+        _log_error(f"❌ 无法从VIDEO对象提取路径，对象类型: {type(video)}")
+        return None
+
+    def _create_blank_image(self):
+        """创建空白图像张量"""
+        try:
+            import numpy as np
+            import torch
+            # 创建512x512的黑色图像
+            blank_array = np.zeros((1, 512, 512, 3), dtype=np.float32)
+            # 转换为torch张量（ComfyUI期望的格式）
+            blank_tensor = torch.from_numpy(blank_array)
+            return blank_tensor
+        except:
+            return None
 
 
 
@@ -4189,7 +4499,14 @@ class VideoPreviewNode:
             _log_warning(f"⚠️ VideoPreviewNode: 无法检测视频编码: {e}")
 
         video_name = os.path.basename(video_path)
-        video_path_name = os.path.basename(os.path.dirname(video_path))
+        video_dir = os.path.dirname(video_path)
+        video_path_name = os.path.basename(video_dir)
+
+        _log_info(f"🎬 VideoPreviewNode 路径信息:")
+        _log_info(f"   - video_path: {video_path}")
+        _log_info(f"   - video_dir: {video_dir}")
+        _log_info(f"   - video_name: {video_name}")
+        _log_info(f"   - video_path_name: {video_path_name}")
 
         # 构建返回的 UI 数据
         ui_data = {"video": [video_name, video_path_name]}
@@ -4482,7 +4799,50 @@ class VideoUtilitiesUploadLiveVideo:
 class VideoUtilitiesLoadAFVideo:
     @classmethod
     def INPUT_TYPES(s):
-        files = [f for f in os.listdir(input_dir) if os.path.isfile(os.path.join(input_dir, f)) and f.split('.')[-1] in ["mp4", "webm","mkv","avi"]]
+        # 扫描 input 和 output 目录及其子文件夹中的视频文件
+        files = []
+        video_extensions = ["mp4", "webm", "mkv", "avi"]
+
+        # 扫描 input 目录
+        if os.path.exists(input_dir):
+            # 扫描根目录
+            for f in os.listdir(input_dir):
+                file_path = os.path.join(input_dir, f)
+                if os.path.isfile(file_path) and f.split('.')[-1].lower() in video_extensions:
+                    files.append(f"[Input] {f}")
+
+            # 扫描子文件夹（一层）
+            for item in os.listdir(input_dir):
+                item_path = os.path.join(input_dir, item)
+                if os.path.isdir(item_path):
+                    for f in os.listdir(item_path):
+                        file_path = os.path.join(item_path, f)
+                        if os.path.isfile(file_path) and f.split('.')[-1].lower() in video_extensions:
+                            # 使用相对路径格式：subfolder/filename
+                            files.append(f"[Input] {item}/{f}")
+
+        # 扫描 output 目录
+        if os.path.exists(output_dir):
+            # 扫描根目录
+            for f in os.listdir(output_dir):
+                file_path = os.path.join(output_dir, f)
+                if os.path.isfile(file_path) and f.split('.')[-1].lower() in video_extensions:
+                    files.append(f"[Output] {f}")
+
+            # 扫描子文件夹（一层）
+            for item in os.listdir(output_dir):
+                item_path = os.path.join(output_dir, item)
+                if os.path.isdir(item_path):
+                    for f in os.listdir(item_path):
+                        file_path = os.path.join(item_path, f)
+                        if os.path.isfile(file_path) and f.split('.')[-1].lower() in video_extensions:
+                            # 使用相对路径格式：subfolder/filename
+                            files.append(f"[Output] {item}/{f}")
+
+        # 如果没有找到任何视频文件，添加提示信息
+        if not files:
+            files.append("No video files found")
+
         return {"required":{
             "video":(files,),
         },
@@ -4502,14 +4862,40 @@ class VideoUtilitiesLoadAFVideo:
 
     @classmethod
     def IS_CHANGED(s, video):
-        # 返回视频文件的修改时间，确保每次都重新加载
-        video_path = os.path.join(input_dir, video)
+        # 解析视频路径（处理 [Output] 和 [Input] 前缀）
+        actual_filename = video
+        base_dir = input_dir
+
+        if video.startswith("[Output] "):
+            actual_filename = video[9:]  # 去掉 "[Output] " 前缀
+            base_dir = output_dir
+        elif video.startswith("[Input] "):
+            actual_filename = video[8:]  # 去掉 "[Input] " 前缀
+            base_dir = input_dir
+
+        video_path = os.path.join(base_dir, actual_filename)
         if os.path.exists(video_path):
             return os.path.getmtime(video_path)
         return float("nan")
 
     def load_video(self, video):
-        video_path = os.path.join(input_dir,video)
+        # 解析视频路径（处理 [Output] 和 [Input] 前缀）
+        actual_filename = video
+        base_dir = input_dir
+
+        if video.startswith("[Output] "):
+            actual_filename = video[9:]  # 去掉 "[Output] " 前缀
+            base_dir = output_dir
+        elif video.startswith("[Input] "):
+            actual_filename = video[8:]  # 去掉 "[Input] " 前缀
+            base_dir = input_dir
+
+        video_path = os.path.join(base_dir, actual_filename)
+
+        _log_info(f"🎬 Load_AF_Video: video={video}")
+        _log_info(f"🎬 Load_AF_Video: actual_filename={actual_filename}")
+        _log_info(f"🎬 Load_AF_Video: base_dir={base_dir}")
+        _log_info(f"🎬 Load_AF_Video: video_path={video_path}")
 
         # 检查视频文件是否存在
         if not os.path.exists(video_path):
@@ -4544,23 +4930,53 @@ class VideoUtilitiesLoadAFVideo:
 
         try:
             import subprocess
+            _log_info(f"🎵 开始提取音频: {video_path}")
+
             with tempfile.NamedTemporaryFile(suffix=".wav",dir=input_dir,delete=False) as aud:
-                cmd = [
-                    "ffmpeg", "-nostdin", "-hide_banner", "-loglevel", "error",
-                    "-i", video_path, "-vn", "-acodec", "pcm_s16le", "-ar", "44100", "-ac", "1",
-                    aud.name, "-y"
-                ]
-                proc = subprocess.run(cmd, capture_output=True)
-            if proc.returncode == 0 and os.path.exists(aud.name) and os.path.getsize(aud.name) > 0:
-                waveform, sample_rate = torchaudio.load(aud.name)
-                audio = {"waveform": waveform.unsqueeze(0), "sample_rate": sample_rate}
-            else:
+                temp_audio_path = aud.name
+
+            cmd = [
+                "ffmpeg", "-nostdin", "-hide_banner", "-loglevel", "error",
+                "-i", video_path, "-vn", "-acodec", "pcm_s16le", "-ar", "44100", "-ac", "1",
+                temp_audio_path, "-y"
+            ]
+            _log_info(f"🎵 FFmpeg 命令: {' '.join(cmd)}")
+
+            proc = subprocess.run(cmd, capture_output=True, text=True)
+
+            if proc.returncode != 0:
+                _log_error(f"❌ FFmpeg 提取音频失败 (返回码: {proc.returncode})")
+                if proc.stderr:
+                    _log_error(f"❌ FFmpeg 错误: {proc.stderr}")
                 audio = None
+            elif not os.path.exists(temp_audio_path):
+                _log_error(f"❌ 临时音频文件不存在: {temp_audio_path}")
+                audio = None
+            elif os.path.getsize(temp_audio_path) == 0:
+                _log_warning(f"⚠️ 视频没有音频轨道或音频为空")
+                audio = None
+            else:
+                _log_info(f"✅ 音频提取成功，文件大小: {os.path.getsize(temp_audio_path)} bytes")
+                try:
+                    waveform, sample_rate = torchaudio.load(temp_audio_path)
+                    audio = {"waveform": waveform.unsqueeze(0), "sample_rate": sample_rate}
+                    _log_info(f"✅ 音频加载成功，采样率: {sample_rate}, 波形形状: {waveform.shape}")
+                except Exception as e:
+                    _log_error(f"❌ 加载音频文件失败: {e}")
+                    audio = None
+
+            # 清理临时文件
             try:
-                os.unlink(aud.name)
-            except:
-                pass
-        except:
+                if os.path.exists(temp_audio_path):
+                    os.unlink(temp_audio_path)
+                    _log_info(f"🗑️ 已删除临时音频文件")
+            except Exception as e:
+                _log_warning(f"⚠️ 删除临时文件失败: {e}")
+
+        except Exception as e:
+            _log_error(f"❌ 音频提取过程出错: {e}")
+            import traceback
+            _log_error(traceback.format_exc())
             audio = None
         return (video_obj,audio,)
 
@@ -4717,10 +5133,1195 @@ class VideoUtilitiesRGBEmptyImage:
         tensor = torch.from_numpy(np.asarray(new_image) / 255.0).unsqueeze(0)
         return (tensor,)
 
+class VideoUtilitiesAudioToSubtitle:
+    """将视频音频转录成字幕并烧录到视频上"""
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        # 获取 Fonts 目录下的所有字体文件
+        fonts_dir = os.path.join(os.path.dirname(__file__), "Fonts")
+        font_files = []
+
+        if os.path.exists(fonts_dir):
+            for file in sorted(os.listdir(fonts_dir)):
+                if file.lower().endswith(('.ttf', '.ttc', '.otf')):
+                    font_files.append(file)
+
+        # 如果没有字体文件，添加提示
+        if not font_files:
+            font_files = ["请将字体文件放入 Fonts 目录"]
+
+        return {
+            "required": {
+                "video": ("VIDEO",),
+                "asr_model": (["SenseVoice", "Whisper"], {"default": "SenseVoice"}),
+                "model_size": (["tiny", "base", "small", "medium", "large"], {"default": "medium"}),
+                "language": (["auto", "zh", "en", "yue", "ja", "ko", "es", "fr", "de", "ru"], {"default": "auto"}),
+                "font_size": ("INT", {"default": 24, "min": 10, "max": 100, "step": 1}),
+                "font_file": (font_files, {"default": font_files[0]}),
+                "font_color": (["white", "yellow", "black", "red", "green", "blue"], {"default": "yellow"}),
+                "text_direction": (["horizontal", "vertical"], {"default": "horizontal"}),
+                "position": (["bottom", "top", "middle"], {"default": "bottom"}),
+                "background": (["yes", "no"], {"default": "yes"}),
+                "animation": ([
+                    "none",           # 无动画
+                    "fade_in",        # 淡入
+                    "slide_up",       # 从下滑入
+                    "slide_down",     # 从上滑入
+                    "zoom_in",        # 放大
+                    "typewriter",     # 打字机效果
+                    "bounce",         # 弹跳
+                    "wave",           # 波浪
+                    "glow",           # 发光
+                    "rainbow",        # 彩虹色
+                    "karaoke"         # 卡拉OK效果
+                ], {"default": "fade_in"}),
+                "animation_duration": ("FLOAT", {"default": 0.3, "min": 0.1, "max": 2.0, "step": 0.1}),
+            },
+            "optional": {
+                "prompt": ("STRING", {
+                    "default": "",
+                    "multiline": True,
+                    "placeholder": "可选：输入提示文本来引导转录（例如：专业术语、人名、地名等）"
+                }),
+                "reference_text": ("STRING", {
+                    "default": "",
+                    "multiline": True,
+                    "placeholder": "可选：输入准确的参考文本，系统会自动校正转录结果（每行一句）"
+                }),
+            }
+        }
+
+    RETURN_TYPES = ("VIDEO", "STRING",)
+    RETURN_NAMES = ("video_with_subtitle", "srt_path",)
+    FUNCTION = "add_subtitle"
+    CATEGORY = "Ken-Chen/Video_Utilities"
+    DESCRIPTION = "Transcribe audio to subtitle and burn it into video using Whisper ASR"
+    OUTPUT_NODE = False
+
+    def add_subtitle(self, video, asr_model, model_size, language, font_size, font_file, font_color, text_direction, position, background, animation, animation_duration, prompt="", reference_text=""):
+        """将音频转录成字幕并烧录到视频上"""
+        try:
+            # 提取视频路径
+            video_path = extract_video_path(video)
+            if not video_path or not os.path.exists(video_path):
+                _log_error("❌ 无法获取视频路径或视频文件不存在")
+                return (video, "")
+
+            _log_info(f"🎬 开始处理视频: {video_path}")
+
+            # 1. 提取音频
+            _log_info("🎵 正在提取音频...")
+            audio_path = self._extract_audio(video_path)
+            if not audio_path:
+                _log_error("❌ 音频提取失败")
+                return (video, "")
+
+            # 2. 使用选定的 ASR 模型转录音频
+            if asr_model == "SenseVoice":
+                result = self._transcribe_sensevoice(audio_path, language, prompt)
+            else:  # Whisper
+                result = self._transcribe_whisper(audio_path, model_size, language, prompt)
+
+            if not result:
+                _log_error("❌ 音频转录失败")
+                return (video, "")
+
+            # 2.5. 如果提供了参考文本，进行智能校正
+            if reference_text and reference_text.strip():
+                _log_info("🔧 正在使用参考文本校正转录结果...")
+                result["segments"] = self._correct_segments_with_reference(
+                    result["segments"], reference_text
+                )
+
+            # 3. 生成 SRT 字幕文件
+            _log_info("📝 正在生成 SRT 字幕文件...")
+            srt_path = self._generate_srt(video_path, result["segments"])
+            if not srt_path:
+                _log_error("❌ SRT 字幕生成失败")
+                # 清理临时音频文件
+                try:
+                    os.unlink(audio_path)
+                except:
+                    pass
+                return (video, "")
+
+            _log_info(f"✅ SRT 字幕已保存: {srt_path}")
+
+            # 4. 将字幕烧录到视频上
+            _log_info(f"🔥 正在将字幕烧录到视频（方向: {text_direction}, 动画: {animation}）...")
+            output_video_path = self._burn_subtitle(
+                video_path, srt_path, font_size, font_file, font_color, text_direction, position, background, animation, animation_duration
+            )
+
+            # 清理临时音频文件
+            try:
+                os.unlink(audio_path)
+            except:
+                pass
+
+            if not output_video_path:
+                _log_error("❌ 字幕烧录失败")
+                return (video, srt_path)
+
+            _log_info(f"✅ 字幕视频已生成: {output_video_path}")
+
+            # 转换为 ComfyUI VIDEO 对象
+            output_video = video_to_comfyui_video(output_video_path)
+            if not output_video:
+                _log_error("❌ 视频对象转换失败")
+                return (video, srt_path)
+
+            return (output_video, srt_path)
+
+        except Exception as e:
+            _log_error(f"❌ 字幕处理失败: {str(e)}")
+            import traceback
+            _log_error(traceback.format_exc())
+            return (video, "")
+
+    def _transcribe_sensevoice(self, audio_path, language, prompt):
+        """使用 SenseVoice 转录音频"""
+        try:
+            from funasr import AutoModel
+            from funasr.utils.postprocess_utils import rich_transcription_postprocess
+        except ImportError:
+            _log_error("❌ 未安装 FunASR，请运行: pip install funasr modelscope")
+            return None
+
+        try:
+            _log_info("🎤 正在使用 SenseVoice 转录音频...")
+
+            # 加载 SenseVoice 模型
+            model = AutoModel(
+                model="iic/SenseVoiceSmall",
+                trust_remote_code=True,
+                device="cuda:0" if torch.cuda.is_available() else "cpu",
+            )
+
+            # 设置语言参数
+            lang_map = {
+                "auto": "auto",
+                "zh": "zh",
+                "en": "en",
+                "yue": "yue",  # 粤语
+                "ja": "ja",
+                "ko": "ko",
+            }
+            lang = lang_map.get(language, "auto")
+
+            # 转录
+            _log_info(f"🔧 SenseVoice 参数: language={lang}, use_itn=True")
+            res = model.generate(
+                input=audio_path,
+                cache={},
+                language=lang,
+                use_itn=True,  # 使用逆文本归一化（添加标点符号）
+                batch_size_s=0,  # 不使用批处理
+            )
+
+            if not res or len(res) == 0:
+                _log_error("❌ SenseVoice 转录结果为空")
+                return None
+
+            # 处理结果
+            text = rich_transcription_postprocess(res[0]["text"])
+            _log_info(f"✅ SenseVoice 转录完成: {text[:100]}...")
+
+            # 转换为 Whisper 格式的结果（用于兼容后续处理）
+            # SenseVoice 返回的是完整文本，我们需要将其分段
+            segments = []
+
+            _log_info(f"🔍 SenseVoice 结果键: {res[0].keys()}")
+
+            if "timestamp" in res[0] and res[0]["timestamp"]:
+                # 如果有时间戳信息
+                _log_info(f"🔍 找到 {len(res[0]['timestamp'])} 个时间戳")
+                for i, ts in enumerate(res[0]["timestamp"]):
+                    _log_info(f"🔍 时间戳 {i}: {ts}")
+                    segments.append({
+                        "start": ts[0] / 1000.0,  # 转换为秒
+                        "end": ts[1] / 1000.0,
+                        "text": ts[2] if len(ts) > 2 else text
+                    })
+            else:
+                # 没有时间戳，智能分割文本
+                _log_info("⚠️ SenseVoice 没有返回时间戳，将智能分割文本")
+                # 获取音频时长
+                import wave
+                try:
+                    with wave.open(audio_path, 'r') as wav_file:
+                        frames = wav_file.getnframes()
+                        rate = wav_file.getframerate()
+                        duration = frames / float(rate)
+                        _log_info(f"🔍 音频时长: {duration:.2f} 秒")
+                except:
+                    duration = 10.0  # 默认 10 秒
+
+                # 智能分割文本为多个字幕段
+                segments = self._split_text_to_segments(text, duration)
+                _log_info(f"📝 文本已分割为 {len(segments)} 个字幕段")
+                for i, seg in enumerate(segments[:3]):  # 显示前3个
+                    _log_info(f"   段{i+1}: {seg['start']:.2f}s - {seg['end']:.2f}s: {seg['text'][:30]}...")
+
+            _log_info(f"📝 生成了 {len(segments)} 个字幕段落")
+
+            return {"segments": segments}
+
+        except Exception as e:
+            _log_error(f"❌ SenseVoice 转录失败: {str(e)}")
+            import traceback
+            _log_error(traceback.format_exc())
+            return None
+
+    def _correct_segments_with_reference(self, segments, reference_text):
+        """使用参考文本校正转录结果
+
+        Args:
+            segments: ASR 转录的字幕段列表（包含时间戳）
+            reference_text: 用户提供的准确文本（每行一句）
+
+        Returns:
+            corrected_segments: 校正后的字幕段列表
+        """
+        import re
+        from difflib import SequenceMatcher
+
+        # 解析参考文本（按行分割）
+        reference_lines = [line.strip() for line in reference_text.strip().split('\n') if line.strip()]
+
+        _log_info(f"📝 参考文本有 {len(reference_lines)} 行")
+        _log_info(f"📝 转录结果有 {len(segments)} 个段落")
+
+        # 提取转录文本（用于对比）
+        transcribed_texts = [seg['text'].strip() for seg in segments]
+
+        # 如果参考文本行数与转录段落数相同，直接一一对应
+        if len(reference_lines) == len(segments):
+            _log_info("✅ 参考文本行数与转录段落数相同，直接替换")
+            corrected_segments = []
+            for i, seg in enumerate(segments):
+                corrected_segments.append({
+                    "start": seg["start"],
+                    "end": seg["end"],
+                    "text": reference_lines[i]
+                })
+                if transcribed_texts[i] != reference_lines[i]:
+                    _log_info(f"   段{i+1} 已校正: '{transcribed_texts[i][:30]}...' → '{reference_lines[i][:30]}...'")
+            return corrected_segments
+
+        # 如果数量不同，使用智能匹配
+        _log_info("🔍 参考文本行数与转录段落数不同，使用智能匹配...")
+
+        # 合并所有转录文本
+        full_transcribed = ''.join(transcribed_texts)
+        full_reference = ''.join(reference_lines)
+
+        # 移除空格和标点，用于相似度对比
+        def normalize_text(text):
+            # 移除所有空格、标点符号
+            text = re.sub(r'[，。！？；、,.!?;，\s]', '', text)
+            return text.lower()
+
+        norm_transcribed = normalize_text(full_transcribed)
+        norm_reference = normalize_text(full_reference)
+
+        # 计算相似度
+        similarity = SequenceMatcher(None, norm_transcribed, norm_reference).ratio()
+        _log_info(f"📊 文本相似度: {similarity * 100:.1f}%")
+
+        # 如果相似度很高（>80%），使用逐句匹配
+        if similarity > 0.8:
+            corrected_segments = self._match_segments_to_reference(
+                segments, reference_lines, transcribed_texts
+            )
+        else:
+            # 相似度较低，警告用户但仍然尝试匹配
+            _log_info(f"⚠️ 文本相似度较低 ({similarity * 100:.1f}%)，可能匹配不准确")
+            corrected_segments = self._match_segments_to_reference(
+                segments, reference_lines, transcribed_texts
+            )
+
+        return corrected_segments
+
+    def _match_segments_to_reference(self, segments, reference_lines, transcribed_texts):
+        """智能匹配转录段落和参考文本
+
+        策略：
+        1. 如果参考文本行数 <= 转录段落数：合并多个转录段落
+        2. 如果参考文本行数 > 转录段落数：拆分转录段落的时间
+        """
+        import re
+        from difflib import SequenceMatcher
+
+        def normalize_text(text):
+            return re.sub(r'[，。！？；、,.!?;，\s]', '', text).lower()
+
+        corrected_segments = []
+
+        if len(reference_lines) <= len(segments):
+            # 情况1: 参考文本较少，合并转录段落
+            _log_info(f"📝 合并模式: {len(segments)} 个段落 → {len(reference_lines)} 行")
+
+            # 计算每行参考文本应该对应多少个转录段落
+            segments_per_line = len(segments) / len(reference_lines)
+
+            current_seg_idx = 0
+            for i, ref_line in enumerate(reference_lines):
+                # 计算这行应该使用多少个转录段落
+                start_idx = int(i * segments_per_line)
+                end_idx = int((i + 1) * segments_per_line)
+
+                # 确保不超出范围
+                end_idx = min(end_idx, len(segments))
+                if i == len(reference_lines) - 1:
+                    end_idx = len(segments)
+
+                # 合并这些段落的时间范围
+                if start_idx < len(segments) and end_idx <= len(segments):
+                    start_time = segments[start_idx]["start"]
+                    end_time = segments[end_idx - 1]["end"]
+
+                    corrected_segments.append({
+                        "start": start_time,
+                        "end": end_time,
+                        "text": ref_line
+                    })
+
+                    _log_info(f"   段{i+1}: {start_time:.2f}s - {end_time:.2f}s: {ref_line[:30]}...")
+
+        else:
+            # 情况2: 参考文本较多，拆分转录段落的时间
+            _log_info(f"📝 拆分模式: {len(segments)} 个段落 → {len(reference_lines)} 行")
+
+            # 计算总时长
+            total_duration = segments[-1]["end"] - segments[0]["start"]
+
+            # 按参考文本的字符数比例分配时间
+            total_chars = sum(len(line) for line in reference_lines)
+            current_time = segments[0]["start"]
+
+            for i, ref_line in enumerate(reference_lines):
+                # 按字符数比例分配时间
+                char_ratio = len(ref_line) / total_chars
+                segment_duration = total_duration * char_ratio
+
+                # 确保最后一个段落结束时间等于总时长
+                if i == len(reference_lines) - 1:
+                    end_time = segments[-1]["end"]
+                else:
+                    end_time = current_time + segment_duration
+
+                corrected_segments.append({
+                    "start": current_time,
+                    "end": end_time,
+                    "text": ref_line
+                })
+
+                _log_info(f"   段{i+1}: {current_time:.2f}s - {end_time:.2f}s: {ref_line[:30]}...")
+
+                current_time = end_time
+
+        _log_info(f"✅ 校正完成，生成 {len(corrected_segments)} 个字幕段")
+
+        return corrected_segments
+
+    def _split_text_to_segments(self, text, duration):
+        """智能分割文本为多个字幕段
+
+        Args:
+            text: 完整文本
+            duration: 音频总时长（秒）
+
+        Returns:
+            segments: 字幕段列表
+        """
+        import re
+
+        _log_info(f"🔍 原始文本: {text[:100]}...")
+
+        # 移除表情符号和特殊标记
+        clean_text = re.sub(r'[😊😢😡🎼🎵🎶✨💡🔥⭐🌟💫🎯🎨🎭🎪🎬🎤🎧🎼🎹🎺🎻🥁🎸]', '', text)
+        clean_text = clean_text.strip()
+
+        _log_info(f"🔍 清理后文本: {clean_text[:100]}...")
+
+        # 按标点符号分割（中文和英文标点）
+        # 注意：中文逗号是 ，（全角），英文逗号是 ,（半角）
+        # 保留标点符号在句子末尾
+        sentences = re.split(r'([。！？；，、.!?;,])', clean_text)
+
+        _log_info(f"🔍 分割后片段数: {len(sentences)}")
+        _log_info(f"🔍 前5个片段: {sentences[:5]}")
+
+        # 重新组合句子和标点
+        combined_sentences = []
+        i = 0
+        while i < len(sentences):
+            if i + 1 < len(sentences) and sentences[i + 1] in '。！？；，、.!?;,':
+                combined_sentences.append(sentences[i] + sentences[i + 1])
+                i += 2
+            elif sentences[i].strip():
+                combined_sentences.append(sentences[i])
+                i += 1
+            else:
+                i += 1
+
+        # 过滤空句子
+        combined_sentences = [s.strip() for s in combined_sentences if s.strip()]
+
+        _log_info(f"🔍 组合后句子数: {len(combined_sentences)}")
+        for idx, sent in enumerate(combined_sentences[:3]):
+            _log_info(f"   句子{idx+1}: {sent}")
+
+        if not combined_sentences:
+            # 如果没有分割成功，返回整段文本
+            _log_info("⚠️ 分割失败，返回整段文本")
+            return [{
+                "start": 0.0,
+                "end": duration,
+                "text": clean_text
+            }]
+
+        # 计算每个句子的时长
+        # 策略：平均分配时间，每个句子显示相同的时长
+        # 这样更符合实际说话的节奏
+        num_sentences = len(combined_sentences)
+        segment_duration = duration / num_sentences
+
+        segments = []
+        current_time = 0.0
+
+        for i, sentence in enumerate(combined_sentences):
+            # 确保最后一个段落结束时间等于总时长
+            if i == num_sentences - 1:
+                end_time = duration
+            else:
+                end_time = current_time + segment_duration
+
+            segments.append({
+                "start": current_time,
+                "end": end_time,
+                "text": sentence
+            })
+
+            _log_info(f"   段{i+1}: {current_time:.2f}s - {end_time:.2f}s: {sentence[:30]}...")
+
+            current_time = end_time
+
+        _log_info(f"✅ 生成 {len(segments)} 个字幕段（平均每段 {segment_duration:.2f}秒）")
+
+        return segments
+
+    def _transcribe_whisper(self, audio_path, model_size, language, prompt):
+        """使用 Whisper 转录音频"""
+        try:
+            import whisper
+        except ImportError:
+            _log_error("❌ 未安装 openai-whisper，请运行: pip install openai-whisper")
+            return None
+
+        try:
+            _log_info(f"🎤 正在使用 Whisper ({model_size}) 转录音频...")
+            model = whisper.load_model(model_size)
+
+            # 设置转录参数以提高准确度
+            # 注意：word_timestamps 在某些环境下可能与 Triton 库冲突，暂时禁用
+            transcribe_options = {
+                "verbose": False,
+                "temperature": 0.0,
+                "beam_size": 5,
+                "best_of": 5,
+                "patience": 1.0,
+                "length_penalty": 1.0,
+                "compression_ratio_threshold": 2.4,
+                "logprob_threshold": -1.0,
+                "no_speech_threshold": 0.6,
+                "condition_on_previous_text": True,
+                "initial_prompt": prompt.strip() if prompt and prompt.strip() else None,
+                "word_timestamps": False,  # 禁用以避免 Triton 兼容性问题
+            }
+
+            # 设置语言参数
+            if language != "auto" and language != "yue":  # Whisper 不支持粤语
+                transcribe_options["language"] = language
+            else:
+                transcribe_options["language"] = None
+
+            if prompt and prompt.strip():
+                _log_info(f"💡 使用提示文本: {prompt.strip()[:50]}...")
+            _log_info(f"🔧 Whisper 参数: beam_size=5, best_of=5, word_timestamps=False")
+
+            result = model.transcribe(audio_path, **transcribe_options)
+
+            # 调试：检查 Whisper 返回结果
+            _log_info(f"🔍 Whisper 结果键: {result.keys()}")
+            if "segments" in result:
+                _log_info(f"✅ Whisper 转录完成: {result['text'][:100]}...")
+                _log_info(f"📝 Whisper 生成了 {len(result['segments'])} 个字幕段")
+                for i, seg in enumerate(result['segments'][:3]):
+                    _log_info(f"   段{i+1}: {seg['start']:.2f}s - {seg['end']:.2f}s: {seg['text'][:30]}...")
+            else:
+                _log_error("❌ Whisper 结果中没有 segments 字段")
+
+            return result
+
+        except Exception as e:
+            _log_error(f"❌ Whisper 转录失败: {str(e)}")
+            import traceback
+            _log_error(traceback.format_exc())
+            return None
+
+    def _extract_audio(self, video_path):
+        """提取视频音频为 WAV 格式"""
+        try:
+            # 生成临时音频文件路径
+            audio_path = os.path.join(
+                tempfile.gettempdir(),
+                f"audio_{int(time.time())}_{random.randint(1000, 9999)}.wav"
+            )
+
+            cmd = [
+                "ffmpeg", "-i", video_path,
+                "-vn",  # 不处理视频
+                "-acodec", "pcm_s16le",  # PCM 16-bit
+                "-ar", "16000",  # 16kHz 采样率（Whisper 推荐）
+                "-ac", "1",  # 单声道
+                "-y",  # 覆盖输出文件
+                audio_path
+            ]
+
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+
+            if result.returncode == 0 and os.path.exists(audio_path):
+                _log_info(f"✅ 音频提取成功: {audio_path}")
+
+                # 检查音频时长
+                try:
+                    probe_cmd = [
+                        "ffprobe",
+                        "-v", "error",
+                        "-show_entries", "format=duration",
+                        "-of", "default=noprint_wrappers=1:nokey=1",
+                        audio_path
+                    ]
+                    probe_result = subprocess.run(probe_cmd, capture_output=True, text=True, timeout=30)
+                    if probe_result.returncode == 0:
+                        audio_duration = float(probe_result.stdout.strip())
+                        _log_info(f"🎵 音频时长: {audio_duration:.2f} 秒")
+                except Exception as e:
+                    _log_info(f"⚠️ 无法检查音频时长: {e}")
+
+                return audio_path
+            else:
+                _log_error(f"❌ FFmpeg 错误: {result.stderr}")
+                return None
+
+        except Exception as e:
+            _log_error(f"❌ 音频提取异常: {str(e)}")
+            return None
+
+    def _generate_srt(self, video_path, segments):
+        """生成 SRT 字幕文件"""
+        try:
+            # 生成 SRT 文件路径（与视频同目录）
+            video_dir = os.path.dirname(video_path)
+            video_name = os.path.splitext(os.path.basename(video_path))[0]
+            srt_path = os.path.join(video_dir, f"{video_name}_subtitle.srt")
+
+            with open(srt_path, 'w', encoding='utf-8') as f:
+                for i, segment in enumerate(segments, start=1):
+                    # SRT 格式：
+                    # 1
+                    # 00:00:00,000 --> 00:00:02,000
+                    # 字幕文本
+                    start_time = self._format_timestamp(segment['start'])
+                    end_time = self._format_timestamp(segment['end'])
+                    text = segment['text'].strip()
+
+                    f.write(f"{i}\n")
+                    f.write(f"{start_time} --> {end_time}\n")
+                    f.write(f"{text}\n\n")
+
+            return srt_path
+
+        except Exception as e:
+            _log_error(f"❌ SRT 生成异常: {str(e)}")
+            return None
+
+    def _format_timestamp(self, seconds):
+        """将秒数转换为 SRT 时间格式 (HH:MM:SS,mmm)"""
+        hours = int(seconds // 3600)
+        minutes = int((seconds % 3600) // 60)
+        secs = int(seconds % 60)
+        millis = int((seconds % 1) * 1000)
+        return f"{hours:02d}:{minutes:02d}:{secs:02d},{millis:03d}"
+
+    def _apply_animation(self, animation, progress, subtitle_progress, base_x, base_y, base_color, width, height, text_height):
+        """应用字幕动画效果
+
+        Args:
+            animation: 动画类型
+            progress: 动画进度 (0.0 到 1.0)
+            subtitle_progress: 字幕整体进度 (0.0 到 1.0)
+            base_x, base_y: 基础位置
+            base_color: 基础颜色 (R, G, B)
+            width, height: 视频尺寸
+            text_height: 文字高度
+
+        Returns:
+            (x, y, alpha, scale, color): 调整后的位置、透明度、缩放、颜色
+        """
+        import math
+
+        x, y = base_x, base_y
+        alpha = 1.0
+        scale = 1.0
+        color = base_color
+
+        if animation == "none":
+            pass
+
+        elif animation == "fade_in":
+            # 淡入效果
+            alpha = progress
+
+        elif animation == "slide_up":
+            # 从下滑入
+            offset = int(text_height * 2 * (1 - progress))
+            y = base_y + offset
+            alpha = progress
+
+        elif animation == "slide_down":
+            # 从上滑入
+            offset = int(text_height * 2 * (1 - progress))
+            y = base_y - offset
+            alpha = progress
+
+        elif animation == "zoom_in":
+            # 放大效果
+            scale = 0.5 + 0.5 * progress
+            alpha = progress
+
+        elif animation == "typewriter":
+            # 打字机效果（通过透明度模拟）
+            alpha = min(progress * 3, 1.0)
+
+        elif animation == "bounce":
+            # 弹跳效果
+            if progress < 0.5:
+                bounce = math.sin(progress * math.pi * 4) * 20 * (1 - progress * 2)
+            else:
+                bounce = 0
+            y = base_y - int(bounce)
+            alpha = min(progress * 2, 1.0)
+
+        elif animation == "wave":
+            # 波浪效果
+            wave = math.sin(subtitle_progress * math.pi * 4) * 10
+            y = base_y + int(wave)
+
+        elif animation == "glow":
+            # 发光效果（通过缩放模拟）
+            glow = 1.0 + math.sin(subtitle_progress * math.pi * 6) * 0.05
+            scale = glow
+
+        elif animation == "rainbow":
+            # 彩虹色效果
+            hue = (subtitle_progress * 360) % 360
+            # HSV 转 RGB
+            h = hue / 60
+            c = 255
+            x_val = int(c * (1 - abs(h % 2 - 1)))
+
+            if 0 <= h < 1:
+                color = (c, x_val, 0)
+            elif 1 <= h < 2:
+                color = (x_val, c, 0)
+            elif 2 <= h < 3:
+                color = (0, c, x_val)
+            elif 3 <= h < 4:
+                color = (0, x_val, c)
+            elif 4 <= h < 5:
+                color = (x_val, 0, c)
+            else:
+                color = (c, 0, x_val)
+
+        elif animation == "karaoke":
+            # 卡拉OK效果（颜色渐变）
+            if subtitle_progress < 0.5:
+                # 前半段：白色到黄色
+                t = subtitle_progress * 2
+                color = (
+                    int(255 * (1 - t) + 0 * t),      # R
+                    int(255 * (1 - t) + 255 * t),    # G
+                    int(255 * (1 - t) + 255 * t)     # B
+                )
+            else:
+                # 后半段：黄色到红色
+                t = (subtitle_progress - 0.5) * 2
+                color = (
+                    int(0 * (1 - t) + 0 * t),        # R
+                    int(255 * (1 - t) + 0 * t),      # G
+                    int(255 * (1 - t) + 255 * t)     # B
+                )
+
+        return x, y, alpha, scale, color
+
+    def _draw_vertical_text(self, draw, text, font, x, y, color, alpha):
+        """绘制竖排文字 - 使用固定间距"""
+        # 使用字体大小作为行高，确保间距一致
+        try:
+            line_height = font.size
+        except:
+            # 如果无法获取字体大小，使用 bbox 估算
+            bbox = draw.textbbox((0, 0), "测", font=font)
+            line_height = bbox[3] - bbox[1]
+
+        current_y = y
+        for char in text:
+            draw.text((x, current_y), char, font=font, fill=(*color, int(255 * alpha)))
+            current_y += line_height
+
+    def _get_vertical_text_size(self, draw, text, font):
+        """计算竖排文字的尺寸 - 使用固定间距"""
+        # 使用字体大小作为行高
+        try:
+            line_height = font.size
+        except:
+            # 如果无法获取字体大小，使用 bbox 估算
+            bbox = draw.textbbox((0, 0), "测", font=font)
+            line_height = bbox[3] - bbox[1]
+
+        total_height = line_height * len(text)
+
+        # 计算最大宽度
+        max_width = 0
+        for char in text:
+            bbox = draw.textbbox((0, 0), char, font=font)
+            char_width = bbox[2] - bbox[0]
+            max_width = max(max_width, char_width)
+
+        return max_width, total_height
+
+    def _burn_subtitle(self, video_path, srt_path, font_size, font_file, font_color, text_direction, position, background, animation="none", animation_duration=0.3):
+        """将字幕烧录到视频上 - 使用 Python + OpenCV 方法，支持动画效果和竖排文字"""
+        try:
+            import cv2
+            import numpy as np
+            from PIL import Image, ImageDraw, ImageFont
+            import re
+
+            # 生成输出视频路径
+            video_dir = os.path.dirname(video_path)
+            video_name = os.path.splitext(os.path.basename(video_path))[0]
+            output_path = os.path.join(video_dir, f"{video_name}_with_subtitle.mp4")
+
+            _log_info(f"🎬 使用 OpenCV 方法烧录字幕...")
+
+            # 读取 SRT 文件
+            with open(srt_path, 'r', encoding='utf-8') as f:
+                srt_content = f.read()
+
+            # 解析 SRT
+            pattern = r'(\d+)\n(\d{2}:\d{2}:\d{2},\d{3}) --> (\d{2}:\d{2}:\d{2},\d{3})\n((?:.*\n)*?)(?=\n\d+\n|\Z)'
+            matches = re.findall(pattern, srt_content, re.MULTILINE)
+
+            # 转换时间戳为毫秒
+            def time_to_ms(time_str):
+                h, m, s = time_str.split(':')
+                s, ms = s.split(',')
+                return int(h) * 3600000 + int(m) * 60000 + int(s) * 1000 + int(ms)
+
+            # 构建字幕时间轴
+            subtitles = []
+            for match in matches:
+                start_ms = time_to_ms(match[1])
+                end_ms = time_to_ms(match[2])
+                text = match[3].strip().replace('\n', ' ')
+                subtitles.append((start_ms, end_ms, text))
+
+            _log_info(f"📝 解析到 {len(subtitles)} 条字幕")
+            if len(subtitles) > 0:
+                _log_info(f"📝 第一条字幕: {subtitles[0][0]}ms - {subtitles[0][1]}ms: {subtitles[0][2][:50]}...")
+                if len(subtitles) > 1:
+                    _log_info(f"📝 第二条字幕: {subtitles[1][0]}ms - {subtitles[1][1]}ms: {subtitles[1][2][:50]}...")
+
+            # 打开视频
+            cap = cv2.VideoCapture(video_path)
+            if not cap.isOpened():
+                _log_error(f"❌ 无法打开视频文件: {video_path}")
+                return None
+
+            fps = cap.get(cv2.CAP_PROP_FPS)
+            width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+            height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+            total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+
+            _log_info(f"📹 视频信息: {width}x{height} @ {fps}fps, {total_frames} 帧")
+
+            if width == 0 or height == 0 or fps == 0:
+                _log_error(f"❌ 视频参数无效: {width}x{height} @ {fps}fps")
+                cap.release()
+                return None
+
+            # 创建临时输出路径（使用 AVI 格式，更稳定）
+            temp_output = os.path.join(video_dir, f"{video_name}_temp.avi")
+
+            # 创建视频写入器 - 使用 XVID 编码器（更可靠）
+            fourcc = cv2.VideoWriter_fourcc(*'XVID')
+            out = cv2.VideoWriter(temp_output, fourcc, fps, (width, height))
+
+            if not out.isOpened():
+                _log_error("❌ 无法创建视频写入器")
+                return None
+
+            # 设置字体路径（从 Fonts 目录）
+            fonts_dir = os.path.join(os.path.dirname(__file__), "Fonts")
+            font_path = os.path.join(fonts_dir, font_file)
+
+            if os.path.exists(font_path):
+                _log_info(f"🔤 字体: {font_file}")
+            else:
+                _log_info(f"⚠️ 字体文件不存在: {font_path}，将使用 PIL 默认字体")
+                font_path = None
+
+            # 设置字体颜色（RGB 格式，用于 PIL）
+            # 注意：PIL 使用 RGB 格式，不是 BGR！
+            color_map = {
+                "white": (255, 255, 255),
+                "yellow": (255, 255, 0),    # RGB: 红+绿=黄
+                "black": (0, 0, 0),
+                "red": (255, 0, 0),         # RGB: 红
+                "green": (0, 255, 0),       # RGB: 绿
+                "blue": (0, 0, 255)         # RGB: 蓝
+            }
+            text_color = color_map.get(font_color, (255, 255, 0))  # 默认黄色
+            _log_info(f"🎨 字幕颜色: {font_color} = RGB{text_color}")
+
+            # 设置字幕位置
+            if position == "bottom":
+                y_offset = int(height * 0.85)
+            elif position == "top":
+                y_offset = int(height * 0.15)
+            else:  # middle
+                y_offset = int(height * 0.5)
+
+            frame_count = 0
+            subtitle_found_count = 0
+            while True:
+                ret, frame = cap.read()
+                if not ret:
+                    break
+
+                # 计算当前时间（毫秒）
+                current_ms = int((frame_count / fps) * 1000)
+
+                # 查找当前时间的字幕
+                current_text = None
+                subtitle_start_ms = None
+                subtitle_end_ms = None
+                for start_ms, end_ms, text in subtitles:
+                    if start_ms <= current_ms <= end_ms:
+                        current_text = text
+                        subtitle_start_ms = start_ms
+                        subtitle_end_ms = end_ms
+                        if subtitle_found_count < 5:  # 只记录前5次
+                            _log_info(f"🎯 帧 {frame_count} ({current_ms}ms) 匹配字幕: {start_ms}-{end_ms}ms: {text[:30]}...")
+                            subtitle_found_count += 1
+                        break
+
+                # 如果有字幕，绘制到帧上
+                if current_text:
+                    # 计算动画进度（0.0 到 1.0）
+                    subtitle_duration_ms = max(subtitle_end_ms - subtitle_start_ms, 1)  # 避免除零错误
+                    elapsed_ms = current_ms - subtitle_start_ms
+                    animation_progress = min(elapsed_ms / (animation_duration * 1000), 1.0)  # 动画进度
+                    subtitle_progress = min(elapsed_ms / subtitle_duration_ms, 1.0)  # 字幕整体进度
+
+                    # 使用 PIL 绘制中文字幕
+                    pil_img = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+                    draw = ImageDraw.Draw(pil_img, 'RGBA')
+
+                    # 加载字体
+                    if font_path and os.path.exists(font_path):
+                        try:
+                            font = ImageFont.truetype(font_path, font_size)
+                        except Exception as e:
+                            _log_info(f"⚠️ 无法加载字体 {font_path}: {e}，使用默认字体")
+                            font = ImageFont.load_default()
+                    else:
+                        font = ImageFont.load_default()
+
+                    # 计算文字位置（根据方向）
+                    if text_direction == "vertical":
+                        # 竖排：计算竖排文字尺寸
+                        text_width, text_height = self._get_vertical_text_size(draw, current_text, font)
+                        # 竖排时，x 位置靠右，y 位置居中
+                        if position == "bottom":
+                            base_x = int(width * 0.9) - text_width // 2
+                        elif position == "top":
+                            base_x = int(width * 0.9) - text_width // 2
+                        else:  # middle
+                            base_x = int(width * 0.9) - text_width // 2
+                        base_y = (height - text_height) // 2
+                    else:
+                        # 横排：计算横排文字尺寸
+                        bbox = draw.textbbox((0, 0), current_text, font=font)
+                        text_width = bbox[2] - bbox[0]
+                        text_height = bbox[3] - bbox[1]
+                        base_x = (width - text_width) // 2
+                        base_y = y_offset - text_height // 2
+
+                    # 应用动画效果
+                    x, y, alpha, scale, color = self._apply_animation(
+                        animation, animation_progress, subtitle_progress,
+                        base_x, base_y, text_color, width, height, text_height
+                    )
+
+                    # 绘制背景（如果需要）
+                    if background == "yes":
+                        padding = 10
+                        bg_alpha = int(128 * alpha)
+                        draw.rectangle(
+                            [x - padding, y - padding, x + text_width * scale + padding, y + text_height * scale + padding],
+                            fill=(0, 0, 0, bg_alpha)
+                        )
+
+                    # 绘制文字（根据方向）
+                    if text_direction == "vertical":
+                        # 竖排文字
+                        if scale != 1.0 or alpha != 1.0:
+                            # 创建临时图像用于缩放
+                            temp_img = Image.new('RGBA', (int(text_width * 1.5), int(text_height * 1.5)), (0, 0, 0, 0))
+                            temp_draw = ImageDraw.Draw(temp_img)
+                            # 竖排绘制
+                            self._draw_vertical_text(temp_draw, current_text, font, int(text_width * 0.25), int(text_height * 0.25), color, alpha)
+
+                            if scale != 1.0:
+                                new_size = (int(temp_img.width * scale), int(temp_img.height * scale))
+                                temp_img = temp_img.resize(new_size, Image.Resampling.LANCZOS)
+
+                            # 粘贴到主图像
+                            pil_img.paste(temp_img, (int(x - text_width * 0.25 * scale), int(y - text_height * 0.25 * scale)), temp_img)
+                        else:
+                            # 直接绘制竖排文字
+                            self._draw_vertical_text(draw, current_text, font, x, y, color, alpha)
+                    else:
+                        # 横排文字
+                        if scale != 1.0 or alpha != 1.0:
+                            # 创建临时图像用于缩放
+                            temp_img = Image.new('RGBA', (int(text_width * 1.5), int(text_height * 1.5)), (0, 0, 0, 0))
+                            temp_draw = ImageDraw.Draw(temp_img)
+                            temp_draw.text((int(text_width * 0.25), int(text_height * 0.25)), current_text, font=font, fill=(*color, int(255 * alpha)))
+
+                            if scale != 1.0:
+                                new_size = (int(temp_img.width * scale), int(temp_img.height * scale))
+                                temp_img = temp_img.resize(new_size, Image.Resampling.LANCZOS)
+
+                            # 粘贴到主图像
+                            pil_img.paste(temp_img, (int(x - text_width * 0.25 * scale), int(y - text_height * 0.25 * scale)), temp_img)
+                        else:
+                            # 直接绘制横排文字
+                            draw.text((x, y), current_text, font=font, fill=(*color, int(255 * alpha)))
+
+                    # 转换回 OpenCV 格式
+                    frame = cv2.cvtColor(np.array(pil_img.convert('RGB')), cv2.COLOR_RGB2BGR)
+
+                out.write(frame)
+                frame_count += 1
+
+                # 显示进度
+                if frame_count % 30 == 0:
+                    progress = (frame_count / total_frames) * 100
+                    _log_info(f"⏳ 处理进度: {progress:.1f}% ({frame_count}/{total_frames})")
+
+            cap.release()
+            out.release()
+
+            _log_info(f"✅ 临时视频已生成: {temp_output}")
+            _log_info(f"📹 实际写入帧数: {frame_count}")
+            _log_info(f"📹 预期帧数: {total_frames}")
+            _log_info(f"📹 视频时长: {frame_count / fps:.2f} 秒")
+
+            # 检查帧数是否匹配
+            if abs(frame_count - total_frames) > 5:
+                _log_info(f"⚠️ 警告: 写入帧数 ({frame_count}) 与预期 ({total_frames}) 不匹配")
+
+            # 使用 FFmpeg 转换为 H.264 MP4（保留音频）
+            _log_info(f"🔄 正在转换为 H.264 格式...")
+
+            # 修复：使用 -shortest 确保视频和音频时长一致
+            # 使用 -async 1 确保音视频同步
+            # 优化流媒体播放：faststart, 关键帧间隔
+            cmd = [
+                "ffmpeg",
+                "-i", temp_output,     # 带字幕的视频
+                "-i", video_path,      # 原始视频（用于提取音频）
+                "-map", "0:v:0",       # 使用第一个输入的视频流
+                "-map", "1:a:0?",      # 使用第二个输入的音频流（如果存在）
+                "-c:v", "libx264",     # H.264 编码
+                "-preset", "medium",
+                "-crf", "23",
+                "-c:a", "aac",         # 重新编码音频（而不是 copy）
+                "-b:a", "192k",        # 音频比特率
+                "-shortest",           # 使用最短的流作为输出时长
+                "-async", "1",         # 音视频同步
+                "-vsync", "cfr",       # 恒定帧率
+                "-movflags", "+faststart",  # 优化流媒体播放
+                "-g", "30",            # 关键帧间隔（每秒一个关键帧）
+                "-keyint_min", "30",   # 最小关键帧间隔
+                "-sc_threshold", "0",  # 禁用场景切换检测
+                "-y",
+                output_path
+            ]
+
+            _log_info(f"🎬 FFmpeg 命令: {' '.join(cmd)}")
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+
+            # 清理临时文件
+            try:
+                os.remove(temp_output)
+            except:
+                pass
+
+            if result.returncode == 0 and os.path.exists(output_path):
+                _log_info(f"✅ 字幕烧录成功: {output_path}")
+                # 检查输出文件大小
+                file_size = os.path.getsize(output_path)
+                _log_info(f"📊 输出文件大小: {file_size / 1024 / 1024:.2f} MB")
+                if file_size < 1024:
+                    _log_error(f"⚠️ 输出文件太小 ({file_size} bytes)，可能有问题")
+
+                # 检查输出视频时长
+                try:
+                    check_cap = cv2.VideoCapture(output_path)
+                    if check_cap.isOpened():
+                        output_fps = check_cap.get(cv2.CAP_PROP_FPS)
+                        output_frames = int(check_cap.get(cv2.CAP_PROP_FRAME_COUNT))
+                        output_duration = output_frames / output_fps if output_fps > 0 else 0
+                        _log_info(f"📹 输出视频: {output_frames} 帧 @ {output_fps:.2f}fps = {output_duration:.2f} 秒")
+
+                        # 与原始视频对比
+                        original_duration = total_frames / fps if fps > 0 else 0
+                        _log_info(f"📹 原始视频: {total_frames} 帧 @ {fps:.2f}fps = {original_duration:.2f} 秒")
+
+                        if abs(output_duration - original_duration) > 0.5:
+                            _log_info(f"⚠️ 警告: 输出视频时长 ({output_duration:.2f}s) 与原始 ({original_duration:.2f}s) 不匹配")
+                        check_cap.release()
+                except Exception as e:
+                    _log_info(f"⚠️ 无法检查输出视频时长: {e}")
+
+                return output_path
+            else:
+                _log_error(f"❌ FFmpeg 转换失败 (返回码: {result.returncode})")
+                _log_error(f"❌ FFmpeg stderr: {result.stderr}")
+                _log_error(f"❌ FFmpeg stdout: {result.stdout}")
+                # 如果转换失败，返回临时文件
+                if os.path.exists(temp_output):
+                    os.rename(temp_output, output_path)
+                    _log_info(f"⚠️ 使用临时文件作为输出: {output_path}")
+                    return output_path
+                return None
+
+        except Exception as e:
+            _log_error(f"❌ 字幕烧录异常: {str(e)}")
+            import traceback
+            _log_error(f"❌ 详细错误: {traceback.format_exc()}")
+            return None
+
+    def _convert_srt_to_ass(self, srt_path, ass_path, font_size, font_color, position, background):
+        """将 SRT 字幕转换为 ASS 格式并应用样式"""
+        try:
+            # 读取 SRT 文件
+            with open(srt_path, 'r', encoding='utf-8') as f:
+                srt_content = f.read()
+
+            # 解析 SRT
+            import re
+            pattern = r'(\d+)\n(\d{2}:\d{2}:\d{2},\d{3}) --> (\d{2}:\d{2}:\d{2},\d{3})\n((?:.*\n)*?)(?=\n\d+\n|\Z)'
+            matches = re.findall(pattern, srt_content, re.MULTILINE)
+
+            # 设置对齐方式
+            if position == "bottom":
+                alignment = 2  # 底部居中
+                margin_v = 20
+            elif position == "top":
+                alignment = 8  # 顶部居中
+                margin_v = 20
+            else:  # middle
+                alignment = 5  # 中间居中
+                margin_v = 0
+
+            # 获取颜色代码
+            color_code = self._get_color_code(font_color)
+
+            # 设置背景
+            if background == "yes":
+                outline = 1
+                shadow = 2
+                back_color = "&H80000000"  # 半透明黑色
+            else:
+                outline = 1
+                shadow = 0
+                back_color = "&H00000000"  # 透明
+
+            # 创建 ASS 文件头
+            ass_content = f"""[Script Info]
+Title: Generated Subtitle
+ScriptType: v4.00+
+WrapStyle: 0
+PlayResX: 384
+PlayResY: 288
+ScaledBorderAndShadow: yes
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: Default,Arial,{font_size},&H{color_code},&H000000FF,&H00000000,{back_color},0,0,0,0,100,100,0,0,1,{outline},{shadow},{alignment},10,10,{margin_v},1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+"""
+
+            # 转换时间格式从 SRT 到 ASS
+            def srt_time_to_ass(srt_time):
+                # SRT: 00:00:00,000 -> ASS: 0:00:00.00
+                return srt_time.replace(',', '.')[:-1]
+
+            # 添加字幕事件
+            for match in matches:
+                start_time = srt_time_to_ass(match[1])
+                end_time = srt_time_to_ass(match[2])
+                text = match[3].strip().replace('\n', '\\N')
+                ass_content += f"Dialogue: 0,{start_time},{end_time},Default,,0,0,0,,{text}\n"
+
+            # 写入 ASS 文件
+            with open(ass_path, 'w', encoding='utf-8') as f:
+                f.write(ass_content)
+
+            _log_info(f"✅ ASS 字幕已生成: {ass_path}")
+
+        except Exception as e:
+            _log_error(f"❌ SRT 转 ASS 失败: {str(e)}")
+            raise
+
+    def _get_color_code(self, color_name):
+        """获取 ASS 字幕颜色代码（AABBGGRR 格式）"""
+        color_map = {
+            "white": "FFFFFF",
+            "yellow": "00FFFF",
+            "black": "000000",
+            "red": "0000FF",
+            "green": "00FF00",
+            "blue": "FF0000",
+        }
+        return color_map.get(color_name, "00FFFF")  # 默认黄色
+
 # 节点映射
 NODE_CLASS_MAPPINGS = {
     "VideoStitchingNode": VideoStitchingNode,
     "GetLastFrameNode": GetLastFrameNode,
+    "GetFirstFrameNode": GetFirstFrameNode,
     "VideoUtilitiesGetVHSFilePath": VideoUtilitiesGetVHSFilePath,
     "VideoToGIFNode": VideoToGIFNode,
     "PreviewGIFNode": PreviewGIFNode,
@@ -4730,11 +6331,13 @@ NODE_CLASS_MAPPINGS = {
     "VideoUtilitiesPromptTextNode": VideoUtilitiesPromptTextNode,
     "VideoUtilitiesLiveVideoMonitor": VideoUtilitiesLiveVideoMonitor,
     "VideoUtilitiesRGBEmptyImage": VideoUtilitiesRGBEmptyImage,
+    "VideoUtilitiesAudioToSubtitle": VideoUtilitiesAudioToSubtitle,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
     "VideoStitchingNode": "Video_Stitching",
     "GetLastFrameNode": "Get_Last_Frame",
+    "GetFirstFrameNode": "Get_First_Frame",
     "VideoUtilitiesGetVHSFilePath": "Get VHS File Path",
     "VideoToGIFNode": "Video_To_GIF",
     "PreviewGIFNode": "Preview_GIF",
@@ -4744,5 +6347,6 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "VideoUtilitiesPromptTextNode": "Prompt_Text_Node",
     "VideoUtilitiesLiveVideoMonitor": "Live_Video_Monitor",
     "VideoUtilitiesRGBEmptyImage": "RGB_Empty_Image",
+    "VideoUtilitiesAudioToSubtitle": "Audio_To_Subtitle",
 }
 

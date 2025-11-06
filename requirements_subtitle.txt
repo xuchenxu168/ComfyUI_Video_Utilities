@@ -1,0 +1,60 @@
+# 字幕生成功能依赖 / Subtitle Generation Dependencies
+# 用于 Audio_To_Subtitle 节点 / For Audio_To_Subtitle node
+
+# ============================================
+# 方案 1: OpenAI Whisper（通用多语言）
+# ============================================
+openai-whisper>=20231117
+
+# ============================================
+# 方案 2: SenseVoice（推荐用于中文/粤语）⭐
+# ============================================
+# FunASR - 阿里巴巴语音识别工具包
+funasr>=1.0.0
+modelscope>=1.10.0
+
+# ============================================
+# 安装说明 / Installation Instructions
+# ============================================
+#
+# 完整安装（推荐）：
+#   pip install -r requirements_subtitle.txt
+#
+# 只安装 Whisper：
+#   pip install openai-whisper
+#
+# 只安装 SenseVoice：
+#   pip install funasr modelscope
+#
+# GPU 加速：
+#   需要安装 CUDA 版本的 PyTorch
+#   pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
+#
+# ============================================
+# 模型对比 / Model Comparison
+# ============================================
+#
+# Whisper:
+#   - 支持 99 种语言
+#   - 模型大小: 39M (tiny) ~ 2.9GB (large)
+#   - 速度: 中等
+#   - 中文准确度: 良好
+#   - 缓存位置: ~/.cache/whisper/
+#
+# SenseVoice (推荐用于中文):
+#   - 支持 50+ 种语言（中文、粤语、英文、日语、韩语等）
+#   - 模型大小: ~220M
+#   - 速度: 比 Whisper 快 5-7 倍 ⚡
+#   - 中文准确度: 优秀 ⭐⭐⭐
+#   - 额外功能: 情感识别、音频事件检测
+#   - 缓存位置: ~/.cache/modelscope/
+#
+# ============================================
+# 使用建议 / Recommendations
+# ============================================
+#
+# 中文/粤语视频 → 使用 SenseVoice ⭐
+# 英文/其他语言 → 使用 Whisper 或 SenseVoice
+# 需要情感识别 → 使用 SenseVoice
+# 离线使用 → 两者都支持
+

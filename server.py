@@ -173,16 +173,21 @@ try:
             codec_name = 'unknown'
         
         # 构建 FFmpeg 转码命令 - 使用 H.264 编码输出 MP4 格式（更兼容）
+        # 参考 VHS (VideoHelperSuite) 的转码方式
         args = [
             ffmpeg_path,
             "-v", "error",
             "-i", file_path,
+            "-vf", "scale=trunc(iw/2)*2:trunc(ih/2)*2",  # 确保宽高是偶数（H.264要求）
             "-c:v", "libx264",
             "-preset", "ultrafast",
-            "-crf", "28",
+            "-crf", "23",  # 降低CRF以提高质量（23是推荐值）
+            "-pix_fmt", "yuv420p",  # 确保像素格式兼容
             "-c:a", "aac",
             "-b:a", "128k",
-            "-movflags", "frag_keyframe+empty_moov",
+            "-ar", "44100",  # 音频采样率
+            "-ac", "2",  # 双声道
+            "-movflags", "frag_keyframe+empty_moov+faststart",  # 优化流式传输
             "-f", "mp4",
             "-"
         ]
@@ -263,6 +268,106 @@ try:
             'message': 'Video Utilities server is working!',
             'ffmpeg_path': ffmpeg_path
         })
+
+    @PromptServer.instance.routes.get("/video_utilities/detect_codec")
+    async def detect_codec(request):
+        """检测视频编码格式"""
+        try:
+            filename = request.rel_url.query.get("filename", "")
+            file_type = request.rel_url.query.get("type", "input").lower()
+            subfolder = request.rel_url.query.get("subfolder", "")
+
+            if not filename:
+                return web.json_response({
+                    'error': 'No filename provided',
+                    'needs_transcode': False
+                }, status=400)
+
+            # 确定文件路径
+            if file_type == "output":
+                base_dir = folder_paths.get_output_directory()
+            else:
+                base_dir = folder_paths.get_input_directory()
+
+            # 如果有 subfolder，添加到路径中
+            if subfolder:
+                file_path = os.path.join(base_dir, subfolder, filename)
+            else:
+                file_path = os.path.join(base_dir, filename)
+
+            print(f"🔍 detect_codec API 调用:")
+            print(f"   - filename: {filename}")
+            print(f"   - file_type: {file_type}")
+            print(f"   - subfolder: {subfolder}")
+            print(f"   - base_dir: {base_dir}")
+            print(f"   - file_path: {file_path}")
+            print(f"   - exists: {os.path.exists(file_path)}")
+
+            # 安全检查
+            if not is_safe_path(file_path):
+                print(f"❌ detect_codec: 路径不安全")
+                return web.json_response({
+                    'error': 'Invalid file path',
+                    'needs_transcode': False
+                }, status=403)
+
+            if not os.path.exists(file_path):
+                print(f"❌ detect_codec: 文件不存在")
+                return web.json_response({
+                    'error': 'File not found',
+                    'needs_transcode': False
+                }, status=404)
+
+            # 使用 ffprobe 检测编码
+            if not ffmpeg_path:
+                return web.json_response({
+                    'error': 'FFmpeg not available',
+                    'needs_transcode': False,
+                    'codec': 'unknown'
+                })
+
+            ffprobe_path = ffmpeg_path.replace('ffmpeg', 'ffprobe')
+            probe_cmd = [
+                ffprobe_path, "-v", "quiet", "-select_streams", "v:0",
+                "-show_entries", "stream=codec_name", "-of", "csv=p=0", file_path
+            ]
+
+            print(f"🔍 detect_codec: 执行 ffprobe 命令: {' '.join(probe_cmd)}")
+            result = subprocess.run(probe_cmd, capture_output=True, text=True, timeout=5)
+            print(f"🔍 detect_codec: ffprobe 返回码: {result.returncode}")
+            print(f"🔍 detect_codec: ffprobe 输出: {result.stdout.strip()}")
+            print(f"🔍 detect_codec: ffprobe 错误: {result.stderr.strip()}")
+
+            if result.returncode == 0:
+                codec_name = result.stdout.strip().lower()
+
+                # 判断是否需要转码
+                # MPEG-4 part 2 (mpeg4) 需要转码，因为浏览器支持有限
+                needs_transcode = codec_name in ['mpeg4', 'msmpeg4v3', 'msmpeg4v2', 'msmpeg4']
+
+                print(f"✅ detect_codec: 编码={codec_name}, 需要转码={needs_transcode}")
+
+                return web.json_response({
+                    'codec': codec_name,
+                    'needs_transcode': needs_transcode,
+                    'filename': filename
+                })
+            else:
+                return web.json_response({
+                    'error': 'Failed to detect codec',
+                    'needs_transcode': False,
+                    'codec': 'unknown'
+                })
+
+        except Exception as e:
+            print(f"❌ Codec detection error: {e}")
+            import traceback
+            traceback.print_exc()
+            return web.json_response({
+                'error': str(e),
+                'needs_transcode': False,
+                'codec': 'unknown'
+            }, status=500)
 
     # 注释掉拦截 /api/view 的代码，因为我们已经有了 /video_utilities/viewvideo 端点
     # 并且访问 routes._resources 会导致 AttributeError

@@ -7,11 +7,10 @@ dependencies = []
 
 [project.urls]
 Repository = "https://github.com/Ken-Chen/ComfyUI_Video_Utilities"
-"Bug Tracker" = "https://github.com/xuchenxu168/Comfyui-Index-TTS2/issues"
 #  Used by Comfy Registry https://registry.comfy.org
 
 [tool.comfy]
-PublisherId = "xuchenxu168"
+PublisherId = "Ken-Chen"
 DisplayName = "ComfyUI_Video_Utilities"
 Icon = ""
 includes = []

@@ -40,6 +40,38 @@ def load_modules():
     except Exception as e:
         print(f"[Video Utilities] Module loading failed: {e}")
 
+    # Import new nodes
+    try:
+        from .nodes import (
+            VideoUtilitiesAudioToText,
+            VideoUtilitiesTextToVideoStatic,
+            VideoUtilitiesTextToVideoDynamic,
+            VideoUtilitiesTextToVideoScrolling,
+            VideoUtilitiesColorPicker,
+        )
+
+        NODE_CLASS_MAPPINGS.update({
+            "Audio_To_Text": VideoUtilitiesAudioToText,
+            "Text_To_Video_Static": VideoUtilitiesTextToVideoStatic,
+            "Text_To_Video_Dynamic": VideoUtilitiesTextToVideoDynamic,
+            "Text_To_Video_Scrolling": VideoUtilitiesTextToVideoScrolling,
+            "Color_Picker": VideoUtilitiesColorPicker,
+        })
+
+        NODE_DISPLAY_NAME_MAPPINGS.update({
+            "Audio_To_Text": "Audio To Text 🎤",
+            "Text_To_Video_Static": "Text To Video (Static) 📝",
+            "Text_To_Video_Dynamic": "Text To Video (Dynamic) 🎯",
+            "Text_To_Video_Scrolling": "Text To Video (Scrolling) 🎬",
+            "Color_Picker": "Color Picker 🎨",
+        })
+
+        print("[Video Utilities] New nodes loaded successfully")
+    except Exception as e:
+        print(f"[Video Utilities] New nodes loading failed: {e}")
+        import traceback
+        traceback.print_exc()
+
 # Load modules immediately
 load_modules()
 

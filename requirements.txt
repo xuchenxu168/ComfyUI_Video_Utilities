@@ -13,6 +13,14 @@ pydub
 scipy
 httpx
 
+# ASR 和字幕依赖 / ASR and Subtitle dependencies
+faster-whisper>=0.10.0
+transformers>=4.30.0
+moviepy>=1.0.3
+jieba>=0.42.1
+langid>=1.1.6
+huggingface-hub>=0.20.0
+
 # 可选依赖 / Optional dependencies
 # 人脸修复功能需要额外依赖，请参考 requirements_face_restore.txt
 # Face restoration features require additional dependencies, see requirements_face_restore.txt
