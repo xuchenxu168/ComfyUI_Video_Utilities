@@ -4528,37 +4528,37 @@ class VideoUtilitiesUploadLiveVideo:
     def INPUT_TYPES(s):
         # 获取视频文件扩展名
         video_extensions = ["mp4", "webm", "mkv", "avi"]
-        
-        # 获取input目录的视频文件
-        input_files = []
+
+        # 收集所有视频文件及其修改时间
+        all_files = []
+
+        # 扫描 input 目录
         if os.path.exists(input_dir):
             for f in os.listdir(input_dir):
                 if os.path.isfile(os.path.join(input_dir, f)) and f.split('.')[-1].lower() in video_extensions:
                     file_path = os.path.join(input_dir, f)
                     mtime = os.path.getmtime(file_path)
-                    input_files.append((f, mtime, "Input"))
-        
-        # 获取output目录的视频文件
-        output_files = []
+                    all_files.append((f, mtime))
+
+        # 扫描 output 目录（跳过同名文件）
         if os.path.exists(output_dir):
+            existing_names = {f for f, _ in all_files}
             for f in os.listdir(output_dir):
                 if os.path.isfile(os.path.join(output_dir, f)) and f.split('.')[-1].lower() in video_extensions:
-                    file_path = os.path.join(output_dir, f)
-                    mtime = os.path.getmtime(file_path)
-                    output_files.append((f, mtime, "Output"))
-        
-        # 按修改时间倒序排序
-        input_files.sort(key=lambda x: x[1], reverse=True)
-        output_files.sort(key=lambda x: x[1], reverse=True)
-        
-        # 只保留带前缀的文件名
-        files = []
-        for f, _, _ in output_files:
-            files.append(f"[Output] {f}")
-        for f, _, _ in input_files:
-            files.append(f"[Input] {f}")
+                    if f not in existing_names:  # 避免重复
+                        file_path = os.path.join(output_dir, f)
+                        mtime = os.path.getmtime(file_path)
+                        all_files.append((f, mtime))
+
+        # 按修改时间倒序排序（最新的在前）
+        all_files.sort(key=lambda x: x[1], reverse=True)
+
+        # 提取文件名（不带前缀）
+        files = [f for f, _ in all_files]
+
         if not files:
             files = ["No video files found"]
+
         return {"required":{
             "video":(files,),
         },
@@ -4569,33 +4569,22 @@ class VideoUtilitiesUploadLiveVideo:
     
     @classmethod
     def VALIDATE_INPUTS(s, video, **kwargs):
-        """验证输入，允许动态文件名"""
+        """验证输入，允许动态文件名（如上传的文件）"""
         # 如果是默认选项，直接通过验证
         if video == "No video files found":
             return True
-        
-        # 解析文件名和路径
-        if video.startswith("[Output] "):
-            actual_filename = video[9:]
-            video_path = os.path.join(output_dir, actual_filename)
-        elif video.startswith("[Input] "):
-            actual_filename = video[8:]
-            video_path = os.path.join(input_dir, actual_filename)
-        else:
-            # 兼容旧格式或直接文件名
-            actual_filename = video
-            video_path = os.path.join(input_dir, video)
-            if not os.path.exists(video_path):
-                video_path = os.path.join(output_dir, video)
-        
-        # 检查文件是否存在且为支持的视频格式
-        if os.path.exists(video_path):
-            video_extensions = ["mp4", "webm", "mkv", "avi"]
-            file_ext = actual_filename.split('.')[-1].lower()
-            if file_ext in video_extensions:
-                return True
-        
-        return f"Video file not found or unsupported format: {video}"
+
+        # 尝试在 input 和 output 目录中查找文件
+        input_path = os.path.join(input_dir, video)
+        output_path = os.path.join(output_dir, video)
+
+        # 如果文件存在于任一目录，验证通过
+        if os.path.exists(input_path) or os.path.exists(output_path):
+            return True
+
+        # 即使文件不存在也返回 True，允许上传功能
+        # 上传后文件会出现在 input 目录
+        return True
     
     @classmethod
     def IS_CHANGED(s, **kwargs):
@@ -4809,7 +4798,9 @@ class VideoUtilitiesLoadAFVideo:
             for f in os.listdir(input_dir):
                 file_path = os.path.join(input_dir, f)
                 if os.path.isfile(file_path) and f.split('.')[-1].lower() in video_extensions:
-                    files.append(f"[Input] {f}")
+                    # 不添加前缀，直接使用文件名
+                    if f not in files:
+                        files.append(f)
 
             # 扫描子文件夹（一层）
             for item in os.listdir(input_dir):
@@ -4819,7 +4810,9 @@ class VideoUtilitiesLoadAFVideo:
                         file_path = os.path.join(item_path, f)
                         if os.path.isfile(file_path) and f.split('.')[-1].lower() in video_extensions:
                             # 使用相对路径格式：subfolder/filename
-                            files.append(f"[Input] {item}/{f}")
+                            relative_path = f"{item}/{f}"
+                            if relative_path not in files:
+                                files.append(relative_path)
 
         # 扫描 output 目录
         if os.path.exists(output_dir):
@@ -4827,7 +4820,10 @@ class VideoUtilitiesLoadAFVideo:
             for f in os.listdir(output_dir):
                 file_path = os.path.join(output_dir, f)
                 if os.path.isfile(file_path) and f.split('.')[-1].lower() in video_extensions:
-                    files.append(f"[Output] {f}")
+                    # 不添加前缀，但如果 input 目录已有同名文件，则跳过
+                    # 这样优先显示 input 目录的文件
+                    if f not in files:
+                        files.append(f)
 
             # 扫描子文件夹（一层）
             for item in os.listdir(output_dir):
@@ -4837,7 +4833,9 @@ class VideoUtilitiesLoadAFVideo:
                         file_path = os.path.join(item_path, f)
                         if os.path.isfile(file_path) and f.split('.')[-1].lower() in video_extensions:
                             # 使用相对路径格式：subfolder/filename
-                            files.append(f"[Output] {item}/{f}")
+                            relative_path = f"{item}/{f}"
+                            if relative_path not in files:
+                                files.append(relative_path)
 
         # 如果没有找到任何视频文件，添加提示信息
         if not files:
@@ -4861,39 +4859,54 @@ class VideoUtilitiesLoadAFVideo:
     FUNCTION = "load_video"
 
     @classmethod
+    def VALIDATE_INPUTS(s, video, **kwargs):
+        """验证输入，允许动态文件名（如上传的文件）"""
+        # 如果是默认选项，直接通过验证
+        if video == "No video files found":
+            return True
+
+        # 尝试在 input 和 output 目录中查找文件
+        input_path = os.path.join(input_dir, video)
+        output_path = os.path.join(output_dir, video)
+
+        # 如果文件存在于任一目录，验证通过
+        if os.path.exists(input_path) or os.path.exists(output_path):
+            return True
+
+        # 即使文件不存在也返回 True，允许上传功能
+        # 上传后文件会出现在 input 目录
+        return True
+
+    @classmethod
     def IS_CHANGED(s, video):
-        # 解析视频路径（处理 [Output] 和 [Input] 前缀）
-        actual_filename = video
-        base_dir = input_dir
+        # 优先在 input 目录查找，找不到再去 output 目录
+        input_path = os.path.join(input_dir, video)
+        output_path = os.path.join(output_dir, video)
 
-        if video.startswith("[Output] "):
-            actual_filename = video[9:]  # 去掉 "[Output] " 前缀
-            base_dir = output_dir
-        elif video.startswith("[Input] "):
-            actual_filename = video[8:]  # 去掉 "[Input] " 前缀
-            base_dir = input_dir
+        if os.path.exists(input_path):
+            return os.path.getmtime(input_path)
+        elif os.path.exists(output_path):
+            return os.path.getmtime(output_path)
 
-        video_path = os.path.join(base_dir, actual_filename)
-        if os.path.exists(video_path):
-            return os.path.getmtime(video_path)
         return float("nan")
 
     def load_video(self, video):
-        # 解析视频路径（处理 [Output] 和 [Input] 前缀）
-        actual_filename = video
-        base_dir = input_dir
+        # 优先在 input 目录查找，找不到再去 output 目录
+        input_path = os.path.join(input_dir, video)
+        output_path = os.path.join(output_dir, video)
 
-        if video.startswith("[Output] "):
-            actual_filename = video[9:]  # 去掉 "[Output] " 前缀
+        if os.path.exists(input_path):
+            video_path = input_path
+            base_dir = input_dir
+        elif os.path.exists(output_path):
+            video_path = output_path
             base_dir = output_dir
-        elif video.startswith("[Input] "):
-            actual_filename = video[8:]  # 去掉 "[Input] " 前缀
+        else:
+            # 默认使用 input 目录（可能是即将上传的文件）
+            video_path = input_path
             base_dir = input_dir
 
-        video_path = os.path.join(base_dir, actual_filename)
-
         _log_info(f"🎬 Load_AF_Video: video={video}")
-        _log_info(f"🎬 Load_AF_Video: actual_filename={actual_filename}")
         _log_info(f"🎬 Load_AF_Video: base_dir={base_dir}")
         _log_info(f"🎬 Load_AF_Video: video_path={video_path}")
 
